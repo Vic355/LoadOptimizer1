@@ -1,0 +1,23 @@
+{
+  "name": "truck-load-optimizer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "sql.js": "^1.15.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/sql.js": "^1.4.11",
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
