@@ -1,30 +1,30 @@
 // Engine data types. All lengths are in centimetres, weights in kilograms.
 // Axes: x runs along the truck length from the cab (x = 0) to the door,
 // y runs across the width, z runs up from the floor.
+import type { ModelRules } from './rules';
 
 export type ModelId = 'free' | 'standard' | 'mixed';
-
-export type Packaging = 'carton' | 'bale';
 
 export interface EngineSku {
   id: number;
   code: string;
   name: string;
+  /** Planning size: measured outer size plus the SKU's size modifier. */
   length: number;
   width: number;
   height: number;
   weight: number;
-  /** Maximum height from the floor that a stack containing this SKU may reach. */
-  safeStackHeight: number;
-  /** When false the carton must stay upright (only rotated around the vertical axis). */
+  /** Most cartons a stack may hold, counted from the floor (Infinity when unlimited). */
+  safeLayers: number;
+  /** When false the carton stays upright unless a model's rotation rule allows any direction. */
   canLieDown: boolean;
-  /** Plastic-wrapped bales cannot carry cartons on top of them. */
-  packaging: Packaging;
+  /** Product group, used to prefer like-for-like fillers in Standar. */
+  group: string;
 }
 
 export interface EngineLine {
   sku: EngineSku;
-  /** Requested quantity; null means "fill as many as fit". */
+  /** Requested quantity in packs; null means "fill as many as fit". */
   qty: number | null;
 }
 
@@ -37,9 +37,10 @@ export interface EngineTruck {
 export interface PlanRequest {
   truck: EngineTruck;
   lines: EngineLine[];
-  /** Time budget for the search-based models, in milliseconds. */
+  rules: ModelRules;
+  /** Overrides rules.searchSeconds (used by tests). */
   timeBudgetMs?: number;
-  /** Segment depth used to group boxes into pseudo-tiers for the free model. */
+  /** Segment depth used to group open-space Bebas loads into pseudo-tiers. */
   freeSegmentDepth?: number;
   seed?: number;
 }
@@ -62,15 +63,18 @@ export interface Tier {
   depth: number;
   counts: Record<number, number>;
   total: number;
-  /** Grid size for uniform tiers (standard model); absent for mixed tiers. */
+  /** Columns in the bottom layer and number of layers of the tier's main SKU. */
   columns?: number;
   layers?: number;
-  /** True when the tier is a full grid of a single SKU. */
+  /** Alternate layers are offset so joints do not line up. */
+  interlocked?: boolean;
+  /** True when the tier holds a single SKU. */
   uniform: boolean;
 }
 
 export interface PlanResult {
   model: ModelId;
+  rules: ModelRules;
   boxes: PlacedBox[];
   tiers: Tier[];
   loaded: Record<number, number>;
@@ -84,4 +88,11 @@ export interface PlanResult {
   elapsedMs: number;
   /** True when tiers are pseudo-tiers (fixed-depth segments) rather than real walls. */
   segmentTiers: boolean;
+}
+
+export interface SearchProgress {
+  evaluated: number;
+  bestCartons: number;
+  /** 0..1 share of the time budget used. */
+  fraction: number;
 }

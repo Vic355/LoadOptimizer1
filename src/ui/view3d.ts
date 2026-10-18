@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { EngineTruck, PlanResult } from '../engine';
+import type { EngineTruck, PlacedBox, PlanResult } from '../engine';
 import { skuColor, tierColor } from './colors';
 
 export type ColorMode = 'sku' | 'tier';
@@ -21,6 +21,13 @@ export class TruckView {
   private plan: PlanResult | null = null;
   private truck: EngineTruck | null = null;
   private needsRender = true;
+  private mesh: THREE.InstancedMesh | null = null;
+  private visible: PlacedBox[] = [];
+  private lastArgs: Parameters<TruckView['setPlan']> | null = null;
+  private picked: PlacedBox | null = null;
+  private raycaster = new THREE.Raycaster();
+  /** Called when a carton is clicked (null when the click hits empty space). */
+  onPick: ((box: PlacedBox | null) => void) | null = null;
 
   constructor(private host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -35,6 +42,16 @@ export class TruckView {
     sun.position.set(-600, 1200, 900);
     this.scene.add(sun);
     this.scene.add(this.truckGroup, this.cargoGroup);
+
+    // A click (not a drag) selects the carton under the pointer.
+    let down: { x: number; y: number } | null = null;
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }));
+    canvas.addEventListener('pointerup', (e) => {
+      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+      down = null;
+      this.pickAt(e.clientX, e.clientY);
+    });
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
@@ -68,7 +85,7 @@ export class TruckView {
     this.needsRender = true;
   }
 
-  setTruck(truck: EngineTruck | null) {
+  setTruck(truck: EngineTruck | null, reframe = true) {
     this.truck = truck;
     clear(this.truckGroup);
     if (!truck || !truck.length) {
@@ -76,7 +93,7 @@ export class TruckView {
       return;
     }
     const { length: L, width: W, height: H } = truck;
-    const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = document.documentElement.dataset.theme === 'dark';
     const lineColor = isDark ? 0x9fb0bf : 0x3a4855;
 
     const floor = new THREE.Mesh(
@@ -103,7 +120,7 @@ export class TruckView {
     cab.position.set(-Math.min(180, L * 0.18) / 2 - 20, cabH / 2, W / 2);
     this.truckGroup.add(cab);
 
-    this.frameCamera();
+    if (reframe) this.frameCamera();
     this.needsRender = true;
   }
 
@@ -119,13 +136,18 @@ export class TruckView {
 
   /** Draws the plan; `upToTier` hides tiers after it (0 = all), `highlightTier` dims the others. */
   setPlan(plan: PlanResult | null, mode: ColorMode, skuOrder: number[], upToTier = 0, highlightTier = 0) {
+    this.lastArgs = [plan, mode, skuOrder, upToTier, highlightTier];
+    if (plan !== this.plan) this.picked = null;
     this.plan = plan;
     clear(this.cargoGroup);
+    this.mesh = null;
+    this.visible = [];
     if (!plan || !plan.boxes.length) {
       this.needsRender = true;
       return;
     }
     const visible = upToTier > 0 ? plan.boxes.filter((b) => b.tier <= upToTier) : plan.boxes;
+    this.visible = visible;
     const geom = new THREE.BoxGeometry(1, 1, 1);
     const material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
     const mesh = new THREE.InstancedMesh(geom, material, visible.length);
@@ -141,17 +163,37 @@ export class TruckView {
       const base = mode === 'sku' ? skuColor(skuOrder.indexOf(b.skuId)) : tierColor(b.tier);
       color.set(base);
       if (highlightTier > 0 && b.tier !== highlightTier) color.lerp(new THREE.Color(0xdde3e8), 0.75);
+      if (b === this.picked) color.lerp(new THREE.Color(0xffffff), 0.55);
       mesh.setColorAt(i, color);
       pushBoxEdges(edgePositions, b.x, b.z, b.y, b.dx, b.dz, b.dy);
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.cargoGroup.add(mesh);
+    this.mesh = mesh;
 
     const edges = new THREE.BufferGeometry();
     edges.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
     this.cargoGroup.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x1b2630, transparent: true, opacity: 0.35 })));
     this.needsRender = true;
+  }
+
+  private pickAt(clientX: number, clientY: number) {
+    if (!this.mesh) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObject(this.mesh)[0];
+    const box = hit?.instanceId != null ? this.visible[hit.instanceId] ?? null : null;
+    this.picked = box === this.picked ? null : box;
+    if (this.lastArgs) this.setPlan(...this.lastArgs);
+    this.onPick?.(this.picked);
+  }
+
+  /** Redraws with the current light or dark colours. */
+  refreshTheme() {
+    this.setTruck(this.truck, false);
+    if (this.lastArgs) this.setPlan(...this.lastArgs);
   }
 
   get currentPlan() {

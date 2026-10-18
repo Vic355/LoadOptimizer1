@@ -1,17 +1,21 @@
 /// <reference lib="webworker" />
-// Runs the packing models off the main thread so the screen never freezes.
-import { MODEL_ORDER, runModel, type PlanRequest, type PlanResult } from './index';
+// Runs one packing model off the main thread; the planner starts one worker per model.
+import { runModel, type ModelId, type PlanRequest, type PlanResult, type SearchProgress } from './index';
 
-export type WorkerResponse = { type: 'result'; result: PlanResult } | { type: 'done' } | { type: 'error'; message: string };
+export type WorkerRequest = { model: ModelId; req: PlanRequest };
+export type WorkerResponse =
+  | { type: 'progress'; model: ModelId; progress: SearchProgress }
+  | { type: 'result'; result: PlanResult }
+  | { type: 'error'; model: ModelId; message: string };
 
-self.onmessage = (ev: MessageEvent<PlanRequest>) => {
+const post = (msg: WorkerResponse) => (self as unknown as Worker).postMessage(msg);
+
+self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
+  const { model, req } = ev.data;
   try {
-    for (const model of MODEL_ORDER) {
-      const result = runModel(model, ev.data);
-      (self as unknown as Worker).postMessage({ type: 'result', result } satisfies WorkerResponse);
-    }
-    (self as unknown as Worker).postMessage({ type: 'done' } satisfies WorkerResponse);
+    const result = runModel(model, req, (progress) => post({ type: 'progress', model, progress }));
+    post({ type: 'result', result });
   } catch (err) {
-    (self as unknown as Worker).postMessage({ type: 'error', message: String(err) } satisfies WorkerResponse);
+    post({ type: 'error', model, message: String(err) });
   }
 };

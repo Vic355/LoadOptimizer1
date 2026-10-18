@@ -70,14 +70,25 @@ export async function openDatabase(): Promise<Database> {
     sqlStatic = await asm();
   }
   const stored = await readStored();
-  if (stored) {
-    db = new sqlStatic.Database(stored);
+  const existing = stored ? new sqlStatic.Database(stored) : null;
+  if (existing && schemaVersion(existing) === SCHEMA_VERSION) {
+    db = existing;
     db.exec('PRAGMA foreign_keys = ON;');
   } else {
+    // First visit, or a database from an older prototype: start again from the seed data.
+    existing?.close();
     db = freshDatabase(sqlStatic);
     await writeStored(db.export());
   }
   return db;
+}
+
+function schemaVersion(d: Database): number {
+  try {
+    return Number(d.exec("SELECT value FROM meta WHERE key = 'schema_version'")[0]?.values[0][0] ?? 0);
+  } catch {
+    return 0;
+  }
 }
 
 function current(): Database {
@@ -115,7 +126,10 @@ export function exportDatabase(): Uint8Array {
 export async function importDatabase(bytes: Uint8Array): Promise<void> {
   if (!sqlStatic) throw new Error('Database not opened');
   const next = new sqlStatic.Database(bytes);
-  next.exec('SELECT count(*) FROM truck_types; SELECT count(*) FROM skus;');
+  if (schemaVersion(next) !== SCHEMA_VERSION) {
+    next.close();
+    throw new Error('schema');
+  }
   db?.close();
   db = next;
   db.exec('PRAGMA foreign_keys = ON;');
