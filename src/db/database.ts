@@ -1,6 +1,6 @@
 import initSqlJs, { type Database, type SqlValue } from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
-import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
+import { MIGRATIONS, SCHEMA_SQL, SCHEMA_VERSION } from './schema';
 import { seedDatabase } from './seed';
 
 // SQLite runs in the browser (sql.js / WebAssembly). The whole database file is kept in
@@ -70,14 +70,39 @@ export async function openDatabase(): Promise<Database> {
     sqlStatic = await asm();
   }
   const stored = await readStored();
-  if (stored) {
-    db = new sqlStatic.Database(stored);
-    db.exec('PRAGMA foreign_keys = ON;');
+  const existing = stored ? new sqlStatic.Database(stored) : null;
+  if (existing && migrate(existing)) {
+    db = existing;
+    await writeStored(db.export());
   } else {
+    // First visit, or a database from an older prototype: start again from the seed data.
+    existing?.close();
     db = freshDatabase(sqlStatic);
     await writeStored(db.export());
   }
   return db;
+}
+
+/** Brings a database up to SCHEMA_VERSION; false when it is too old to upgrade. */
+function migrate(d: Database): boolean {
+  let v = schemaVersion(d);
+  while (v < SCHEMA_VERSION && MIGRATIONS[v]) {
+    d.exec('PRAGMA foreign_keys = OFF;');
+    d.exec(`BEGIN; ${MIGRATIONS[v]} COMMIT;`);
+    v++;
+    d.run("UPDATE meta SET value = ? WHERE key = 'schema_version'", [String(v)]);
+  }
+  if (v !== SCHEMA_VERSION) return false;
+  d.exec('PRAGMA foreign_keys = ON;');
+  return true;
+}
+
+function schemaVersion(d: Database): number {
+  try {
+    return Number(d.exec("SELECT value FROM meta WHERE key = 'schema_version'")[0]?.values[0][0] ?? 0);
+  } catch {
+    return 0;
+  }
 }
 
 function current(): Database {
@@ -115,7 +140,10 @@ export function exportDatabase(): Uint8Array {
 export async function importDatabase(bytes: Uint8Array): Promise<void> {
   if (!sqlStatic) throw new Error('Database not opened');
   const next = new sqlStatic.Database(bytes);
-  next.exec('SELECT count(*) FROM truck_types; SELECT count(*) FROM skus;');
+  if (!migrate(next)) {
+    next.close();
+    throw new Error('schema');
+  }
   db?.close();
   db = next;
   db.exec('PRAGMA foreign_keys = ON;');

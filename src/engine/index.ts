@@ -1,18 +1,9 @@
-import type { ModelId, PlanRequest, PlanResult } from './types';
-import { runStandard } from './standard';
-import { runFree, runMixed } from './models';
+import type { ModelId } from './types';
 
 export * from './types';
+export { runModel } from './models';
+export { checkStability, TIP, SLIDE, OVERHANG } from './stability';
+export { DEFAULT_RULES, withDefaults, type ModelRules } from './rules';
 
+/** Display order of the three models, side by side. */
 export const MODEL_ORDER: ModelId[] = ['free', 'standard', 'mixed'];
-
-export function runModel(model: ModelId, req: PlanRequest): PlanResult {
-  switch (model) {
-    case 'free':
-      return runFree(req);
-    case 'standard':
-      return runStandard(req);
-    case 'mixed':
-      return runMixed(req);
-  }
-}

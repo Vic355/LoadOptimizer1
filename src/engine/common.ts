@@ -1,4 +1,6 @@
 import type { EngineLine, EngineSku, ModelId, PlacedBox, PlanResult, Tier, EngineTruck } from './types';
+import type { ModelRules } from './rules';
+import { checkStability } from './stability';
 
 export interface Orientation {
   dx: number;
@@ -6,16 +8,14 @@ export interface Orientation {
   dz: number;
 }
 
-/** Distinct orientations of a carton; upright cartons only rotate around the vertical axis. */
-export function orientations(sku: EngineSku): Orientation[] {
+/** Distinct orientations of a carton allowed by the model's rotation rule. */
+export function orientations(sku: EngineSku, rotation: ModelRules['rotation']): Orientation[] {
   const { length: l, width: w, height: h } = sku;
   const raw: [number, number, number][] = [
     [l, w, h],
     [w, l, h],
   ];
-  if (sku.canLieDown) {
-    raw.push([l, h, w], [h, l, w], [w, h, l], [h, w, l]);
-  }
+  if (rotation === 'any' || (rotation === 'sku' && sku.canLieDown)) raw.push([l, h, w], [h, l, w], [w, h, l], [h, w, l]);
   const seen = new Set<string>();
   const out: Orientation[] = [];
   for (const [dx, dy, dz] of raw) {
@@ -28,9 +28,9 @@ export function orientations(sku: EngineSku): Orientation[] {
   return out;
 }
 
-/** Stack ceiling for a SKU inside a truck: the lower of the truck height and the safe stacking height. */
-export function stackCeiling(sku: EngineSku, truck: EngineTruck): number {
-  return Math.min(truck.height, sku.safeStackHeight);
+/** Stack limit in cartons for a SKU under the model's rules. */
+export function layerLimit(sku: EngineSku, rules: ModelRules): number {
+  return rules.respectSafeStack ? Math.max(1, sku.safeLayers) : Infinity;
 }
 
 /** Small deterministic PRNG (mulberry32) so a seed reproduces the same search. */
@@ -61,7 +61,20 @@ export function fillerWeight(lines: EngineLine[], i: number): number {
   return lines[i].qty == null ? 0.001 : 1;
 }
 
-export function buildTiersFromBoxes(boxes: PlacedBox[]): Tier[] {
+/** Share of a box's base resting on the tops of `others` (1 on the floor). */
+export function supportFraction(b: PlacedBox, others: PlacedBox[]): number {
+  if (b.z < 0.5) return 1;
+  let area = 0;
+  for (const o of others) {
+    if (o === b || Math.abs(o.z + o.dz - b.z) > 0.5) continue;
+    const ox = Math.min(b.x + b.dx, o.x + o.dx) - Math.max(b.x, o.x);
+    const oy = Math.min(b.y + b.dy, o.y + o.dy) - Math.max(b.y, o.y);
+    if (ox > 0 && oy > 0) area += ox * oy;
+  }
+  return area / (b.dx * b.dy);
+}
+
+export function buildTiersFromBoxes(boxes: PlacedBox[], meta?: Map<number, Partial<Tier>>): Tier[] {
   const byTier = new Map<number, PlacedBox[]>();
   for (const b of boxes) {
     const list = byTier.get(b.tier);
@@ -78,13 +91,14 @@ export function buildTiersFromBoxes(boxes: PlacedBox[]): Tier[] {
       x0 = Math.min(x0, b.x);
       x1 = Math.max(x1, b.x + b.dx);
     }
-    tiers.push({ index, x0, depth: x1 - x0, counts, total: list.length, uniform: Object.keys(counts).length === 1 });
+    tiers.push({ index, x0, depth: x1 - x0, counts, total: list.length, uniform: Object.keys(counts).length === 1, ...meta?.get(index) });
   }
   return tiers;
 }
 
 export function summarise(
   model: ModelId,
+  rules: ModelRules,
   truck: EngineTruck,
   lines: EngineLine[],
   boxes: PlacedBox[],
@@ -114,6 +128,7 @@ export function summarise(
   const truckVolume = truck.length * truck.width * truck.height;
   return {
     model,
+    rules,
     boxes,
     tiers,
     loaded,
@@ -126,6 +141,7 @@ export function summarise(
     plansEvaluated,
     elapsedMs: Math.round(performance.now() - startedAt),
     segmentTiers,
+    stability: checkStability(boxes, truck, { physics: rules.physics }),
   };
 }
 
