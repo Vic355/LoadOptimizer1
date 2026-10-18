@@ -141,7 +141,7 @@ export function summarise(
     plansEvaluated,
     elapsedMs: Math.round(performance.now() - startedAt),
     segmentTiers,
-    stability: checkStability(boxes, truck),
+    stability: checkStability(boxes, truck, { physics: rules.physics }),
   };
 }
 

@@ -1,4 +1,4 @@
-import { MODEL_ORDER, type ModelId, type PlacedBox, type PlanRequest, type PlanResult, type SearchProgress } from '../engine';
+import { MODEL_ORDER, withDefaults, type ModelId, type PlacedBox, type PlanRequest, type PlanResult, type SearchProgress } from '../engine';
 import type { WorkerRequest, WorkerResponse } from '../engine/worker';
 import * as repo from '../db/repo';
 import type { Destination, SavedPlan, Sku, TruckType } from '../db/repo';
@@ -1023,9 +1023,9 @@ function stabilityBlock(plan: PlanResult, legend: boolean) {
     h('span', { class: 'kpi-label' }, t.stability),
     h('strong', {}, s.risky ? `⚠ ${t.stabilityRisk(s.risky)}` : `✓ ${t.stabilityOk}`),
     s.risky ? h('div', { class: 'small' }, t.stabilityParts(s.tip, s.slide, s.overhang)) : null,
-    s.doorFace ? h('div', { class: 'small' }, t.doorNote) : null,
+    s.endFace ? h('div', { class: 'small' }, t.doorNote) : null,
     legend ? h('div', { class: 'risk-legend' }, item(1, t.riskTip), item(2, t.riskSlide), item(4, t.riskOverhang), item(0, t.riskNone)) : null,
-    h('p', { class: 'hint' }, t.stabilityHint),
+    h('p', { class: 'hint' }, t.stabilityHint(...physicsNumbers(plan))),
   );
 }
 
@@ -1035,4 +1035,9 @@ function riskText(plan: PlanResult, b: PlacedBox) {
   if (!s || k < 0) return null;
   const f = s.flags[k];
   return h('div', { class: 'risk-text' }, `⚠ ${[f & 1 ? t.riskTip : '', f & 2 ? t.riskSlide : '', f & 4 ? t.riskOverhang : ''].filter(Boolean).join(' · ')}`);
+}
+
+function physicsNumbers(plan: PlanResult): [number, number, number, number, number] {
+  const p = withDefaults(plan.model, plan.rules).physics;
+  return [p.brakeG, p.accelG, p.sideG, p.bumpG, p.friction];
 }

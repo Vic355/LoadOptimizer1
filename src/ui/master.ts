@@ -451,7 +451,7 @@ export class MasterData {
         cb.addEventListener('change', () => (r[key] = cb.checked));
         return h('label', { class: 'check' }, cb, ` ${t.rule[key]}`);
       };
-      const select = <K extends 'mixing' | 'rotation'>(key: K, options: Record<ModelRules[K], string>) => {
+      const select = <K extends 'mixing' | 'rotation' | 'fillFrom'>(key: K, options: Record<ModelRules[K], string>) => {
         const sel = h('select', { disabled: !edit }, ...Object.entries(options).map(([v, label]) => h('option', { value: v, selected: r[key] === v }, label as string)));
         sel.addEventListener('change', () => (r[key] = sel.value as ModelRules[K]));
         return h('label', {}, t.rule[key], sel);
@@ -464,6 +464,15 @@ export class MasterData {
           r[key] = v / scale;
         });
         return h('label', {}, t.rule[key], input);
+      };
+      const physics = (key: keyof ModelRules['physics'], min: number, max: number, step: number) => {
+        const input = h('input', { type: 'number', min, max, step, value: String(r.physics[key]), disabled: !edit });
+        input.addEventListener('change', () => {
+          const v = Math.min(max, Math.max(min, Number(input.value.replace(',', '.')) || 0));
+          input.value = String(v);
+          r.physics = { ...r.physics, [key]: v };
+        });
+        return h('label', {}, t.physics[key], input);
       };
       const status = h('span', { class: 'muted', role: 'status' });
       return h(
@@ -483,7 +492,24 @@ export class MasterData {
           check('heavyBottom'),
           number('maxGapCm', 1, 0, 100, 1),
           check('safetyFirst'),
+          select('fillFrom', t.fillFromOptions),
           number('searchSeconds', 1, 1, 30, 1),
+        ),
+        h(
+          'details',
+          { class: 'physics' },
+          h('summary', {}, t.physicsTitle),
+          h('p', { class: 'hint' }, t.physicsHint),
+          h(
+            'div',
+            { class: 'form-grid' },
+            physics('brakeG', 0, 2, 0.05),
+            physics('accelG', 0, 2, 0.05),
+            physics('sideG', 0, 2, 0.05),
+            physics('bumpG', 0, 0.9, 0.05),
+            physics('friction', 0, 1.5, 0.05),
+            physics('slideGapCm', 0, 50, 1),
+          ),
         ),
         edit
           ? h(

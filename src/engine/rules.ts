@@ -1,6 +1,27 @@
 import type { ModelId } from './types';
 
 /**
+ * Forces and material values for the stability check, in units of g (gravity). The defaults are
+ * the road-transport values of EN 12195-1; raise them to plan for rougher roads or driving.
+ */
+export interface PhysicsRules {
+  /** Push towards the cab when braking. */
+  brakeG: number;
+  /** Push towards the door when speeding up. */
+  accelG: number;
+  /** Push sideways in curves and lane changes. */
+  sideG: number;
+  /** Upward jolt from bumps; it makes cartons lighter for a moment, so they slide and tip more easily. */
+  bumpG: number;
+  /** Friction between cartons (0.4 to 0.6 for cardboard). A carton slides when the push exceeds friction. */
+  friction: number;
+  /** Free room (cm) a carton may shift into before it counts as able to slide. */
+  slideGapCm: number;
+}
+
+export const DEFAULT_PHYSICS: PhysicsRules = { brakeG: 0.8, accelG: 0.5, sideG: 0.5, bumpG: 0, friction: 0.4, slideGapCm: 10 };
+
+/**
  * Optimizer rules that the admin can change on the Model rules page. Fixed for every model:
  * cartons stay inside the truck, never overlap, the bottom layer is filled across the width
  * first, and every carton is fully supported (interlock patterns may use interlockMinSupport).
@@ -25,6 +46,9 @@ export interface ModelRules {
   maxGapCm: number;
   /** Rank plans by the stability check first and carton count second. */
   safetyFirst: boolean;
+  /** Where loading starts: tiers are built from the cab towards the door, or from the door towards the cab. */
+  fillFrom: 'cab' | 'door';
+  physics: PhysicsRules;
   /** Search time for this model. */
   searchSeconds: number;
 }
@@ -41,6 +65,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     heavyBottom: true,
     maxGapCm: 0,
     safetyFirst: false,
+    fillFrom: 'cab',
+    physics: DEFAULT_PHYSICS,
     searchSeconds: 3,
   },
   standard: {
@@ -54,6 +80,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     heavyBottom: true,
     maxGapCm: 10,
     safetyFirst: true,
+    fillFrom: 'cab',
+    physics: DEFAULT_PHYSICS,
     searchSeconds: 2,
   },
   mixed: {
@@ -67,11 +95,14 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     heavyBottom: true,
     maxGapCm: 10,
     safetyFirst: false,
+    fillFrom: 'cab',
+    physics: DEFAULT_PHYSICS,
     searchSeconds: 3,
   },
 };
 
 /** Fills in fields missing from rules saved by an older version. */
 export function withDefaults(model: ModelId, rules: Partial<ModelRules> | null | undefined): ModelRules {
-  return { ...DEFAULT_RULES[model], ...(rules ?? {}) };
+  const base = DEFAULT_RULES[model];
+  return { ...base, ...(rules ?? {}), physics: { ...base.physics, ...(rules?.physics ?? {}) } };
 }

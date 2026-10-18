@@ -1,7 +1,7 @@
 import type { PlacedBox, PlanRequest, Tier } from './types';
 import { fillSpaces, type Space } from './blocks';
 import { fillerWeight, layerLimit, loadingSequence, orientations, supportFraction, type Orientation } from './common';
-import { FORWARD_G, checkStability } from './stability';
+import { checkStability, maxStep, pushAlongX } from './stability';
 
 /** One carton position in a row across the truck width; `turned` cartons are rotated 90°. */
 interface Slot {
@@ -149,8 +149,19 @@ function buildTier(
   // Straight columns that leave too wide a gap at one wall are centred, splitting it between both walls.
   const spare = truck.width - pattern.a.length * o.dy;
   if (!pattern.b && rules.maxGapCm > 0 && spare > rules.maxGapCm) pattern.a = pattern.a.map((s) => ({ ...s, y: s.y + spare / 2 }));
-  const ceiling = rules.safetyFirst ? Math.min(truck.height, prevTop + depth / FORWARD_G) : truck.height;
-  const maxLayers = Math.max(1, Math.min(Math.floor(ceiling / o.dz), layerLimit(sku, rules)));
+  const reversed = rules.fillFrom === 'door';
+  // Braking (or speeding up, when filling from the door) pushes this tier towards the previous one.
+  const ceiling = rules.safetyFirst ? Math.min(truck.height, prevTop + maxStep(depth, pushAlongX(rules.physics, true, reversed), rules.physics)) : truck.height;
+  let maxLayers = Math.max(1, Math.min(Math.floor(ceiling / o.dz), layerLimit(sku, rules)));
+  if (rules.safetyFirst && Number.isFinite(remaining[main])) {
+    // The other push leans this tier on the next one. When the SKU's last cartons would make a
+    // short final tier, split them over two tiers of even height so neither stands tall and alone.
+    const perRow = pattern.a.length;
+    const rowsLeft = Math.ceil(remaining[main] / perRow);
+    const lastLayers = rowsLeft - maxLayers;
+    const backStep = maxStep(depth, pushAlongX(rules.physics, false, reversed), rules.physics);
+    if (lastLayers > 0 && lastLayers < maxLayers && (maxLayers - lastLayers) * o.dz > backStep) maxLayers = Math.ceil(rowsLeft / 2);
+  }
   const boxes: PlacedBox[] = [];
   const rows: Slot[][] = [];
 
@@ -206,7 +217,7 @@ function buildTier(
     if (rules.safetyFirst && boxes.length > mainCount) {
       for (let pass = 0; pass < 4; pass++) {
         const all = [...prevBoxes, ...boxes];
-        const flagged = new Set(checkStability(all, truck).flagged.map((i) => all[i]));
+        const flagged = new Set(checkStability(all, truck, { physics: rules.physics, reversed }).flagged.map((i) => all[i]));
         const keep: PlacedBox[] = boxes.slice(0, mainCount);
         let dropped = false;
         for (const b of boxes.slice(mainCount).sort((p, q) => p.z - q.z)) {

@@ -130,7 +130,7 @@ export function printPlan({ plan, truck, destination, reference, skus, snapshot 
             )
           : null,
         risky.size ? h('div', { class: 'p-unplaced' }, t.riskPrint(risky.size)) : null,
-        plan.stability?.doorFace ? h('p', { class: 'p-note' }, t.doorNote) : null,
+        plan.stability?.endFace ? h('p', { class: 'p-note' }, t.doorNote) : null,
         plan.segmentTiers ? h('p', { class: 'p-note' }, t.segmentNote) : plan.tiers.some((x) => x.interlocked) ? h('p', { class: 'p-note' }, t.interlockNote) : null,
         h('div', { class: 'p-signs' }, h('div', {}, h('div', { class: 'p-line' }), t.loaderSign), h('div', {}, h('div', { class: 'p-line' }), t.checkerSign)),
       ),

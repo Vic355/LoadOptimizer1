@@ -143,14 +143,17 @@ export const t = {
   stabilityRisk: (n: number) => `${n.toLocaleString('id-ID')} karton berisiko`,
   stabilityParts: (tip: number, slide: number, overhang: number) =>
     [tip ? `${tip} bisa terguling` : '', slide ? `${slide} bisa bergeser` : '', overhang ? `${overhang} tidak bertumpu di tengah` : ''].filter(Boolean).join(' · '),
-  stabilityHint: 'Diuji dengan percepatan pengamanan muatan EN 12195-1: 0,8 g ke depan saat rem, 0,5 g ke belakang dan ke samping. Muka muatan di pintu ditahan pintu dan sebaiknya diganjal.',
+  stabilityHint: (brake: number, accel: number, side: number, bump: number, mu: number) => {
+    const n = (x: number) => x.toLocaleString('id-ID');
+    return `Diuji seperti mesin fisika: dorongan ${n(brake)} g ke kabin saat rem, ${n(accel)} g ke pintu saat gas, ${n(side)} g ke samping${bump ? `, guncangan ${n(bump)} g ke atas` : ''}; gesekan antar karton ${n(mu)}. Nilai bisa diubah di Aturan Model.`;
+  },
   stabilityOld: 'Rencana lama, belum dicek stabilitas.',
   colorByRisk: 'Risiko',
   riskTip: 'Bisa terguling',
   riskSlide: 'Bisa bergeser (celah > 10 cm)',
   riskOverhang: 'Tidak bertumpu di tengah',
   riskNone: 'Aman',
-  doorNote: 'Ganjal atau ikat muka muatan di pintu.',
+  doorNote: 'Ganjal atau ikat muka muatan yang terbuka (ujung muatan yang tidak menempel dinding).',
   riskPrint: (n: number) => `Perhatian: ${n} karton berisiko (ditandai ⚠ di tier). Isi celah dengan ganjal atau ikat.`,
 
   // Summary
@@ -230,8 +233,20 @@ export const t = {
     respectSafeStack: 'Patuhi tinggi tumpukan aman SKU',
     heavyBottom: 'Yang berat di bawah',
     maxGapCm: 'Celah maksimum dalam tier (cm, 0 = bebas)',
+    fillFrom: 'Arah pengisian (lapis bawah dulu)',
     safetyFirst: 'Utamakan keamanan (stabilitas) di atas jumlah karton',
     searchSeconds: 'Waktu pencarian (detik)',
+  },
+  fillFromOptions: { cab: 'Dari kabin ke pintu', door: 'Dari pintu ke kabin' },
+  physicsTitle: 'Fisika (cek stabilitas)',
+  physicsHint: 'Dorongan dalam g (1 g = gravitasi). Nilai awal: EN 12195-1 untuk truk di jalan. Naikkan untuk jalan rusak atau sopir yang mengerem keras.',
+  physics: {
+    brakeG: 'Dorongan ke kabin saat rem (g)',
+    accelG: 'Dorongan ke pintu saat gas (g)',
+    sideG: 'Dorongan ke samping di tikungan (g)',
+    bumpG: 'Guncangan ke atas (g)',
+    friction: 'Gesekan antar karton (0,4–0,6)',
+    slideGapCm: 'Celah boleh geser (cm)',
   },
   mixingOptions: { none: 'Tidak boleh', fill: 'Hanya untuk mengisi tier (grup produk sama dulu)', free: 'Bebas' },
   rotationOptions: { upright: 'Hanya diputar mendatar', sku: 'Ikuti "boleh rebah" per SKU', any: 'Segala arah' },
@@ -249,6 +264,8 @@ export const t = {
     heavyOn: 'SKU berat diutamakan di bawah.',
     gap: (cm: number) => `Pola yang meninggalkan celah lebih dari ${cm} cm tidak dipakai; kolom lurus dipusatkan agar celah terbagi ke dua dinding.`,
     safetyOn: 'Keamanan diutamakan: rencana dengan karton berisiko kalah dari rencana yang lebih stabil, tier tidak dibuat jauh lebih tinggi dari tier sebelumnya, dan lapis atas hanya dipasang penuh.',
+    fillFrom: { cab: 'Diisi dari kabin ke arah pintu, lapis bawah dulu.', door: 'Diisi dari pintu ke arah kabin, lapis bawah dulu (mis. truk wingbox).' },
+    twoSided: 'Tinggi tier dibatasi terhadap tier di depan dan di belakangnya, agar tidak terguling saat rem maupun saat gas; sisa SKU dibagi ke dua tier yang sama tinggi.',
     search: (s: number) => `Mencari selama ${s} detik dan memilih rencana dengan karton terbanyak.`,
   },
 

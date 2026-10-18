@@ -10,7 +10,8 @@ export function describeRules(r: ModelRules): string[] {
   out.push(d.rotation[r.rotation], r.respectSafeStack ? d.safeOn : d.safeOff);
   if (r.heavyBottom) out.push(d.heavyOn);
   if (r.tiers && r.maxGapCm > 0) out.push(d.gap(r.maxGapCm));
-  if (r.safetyFirst) out.push(d.safetyOn);
+  if (r.safetyFirst) out.push(d.safetyOn, d.twoSided);
+  out.push(d.fillFrom[r.fillFrom]);
   out.push(d.search(r.searchSeconds));
   return out;
 }

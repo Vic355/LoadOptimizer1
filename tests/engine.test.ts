@@ -150,3 +150,32 @@ describe('stability check', () => {
     expect(standard).toBeLessThanOrEqual(risk('mixed'));
   });
 });
+
+describe('physics rules and fill direction', () => {
+  const box = (x: number, y: number, z: number): PlacedBox => ({ skuId: 1, x, y, z, dx: 60, dy: 40, dz: 35, tier: 1 });
+  const big = { length: 600, width: 245, height: 250 };
+  const tower = [0, 35, 70].map((z) => box(200, 100, z));
+
+  it('bumps make tipping easier and friction stops sliding', () => {
+    const calm = checkStability(tower, big, { physics: { ...DEFAULT_RULES.standard.physics, brakeG: 0.5, accelG: 0.5 } });
+    const bumpy = checkStability(tower, big, { physics: { ...DEFAULT_RULES.standard.physics, brakeG: 0.5, accelG: 0.5, bumpG: 0.5 } });
+    expect(bumpy.tip).toBeGreaterThan(calm.tip);
+    const grippy = checkStability(tower, big, { physics: { ...DEFAULT_RULES.standard.physics, friction: 1.5 } });
+    expect(grippy.slide).toBe(0);
+  });
+
+  it('fills from the door when asked', () => {
+    for (const model of MODEL_ORDER) {
+      const rules = { ...DEFAULT_RULES[model], fillFrom: 'door' as const };
+      const req: PlanRequest = { truck, lines: lines.map((l) => ({ ...l, qty: l.qty ?? 40 })), rules, timeBudgetMs: 150 };
+      const r = runModel(model, req);
+      assertValid(model, req, r.boxes);
+      const maxX = Math.max(...r.boxes.map((b) => b.x + b.dx));
+      const minX = Math.min(...r.boxes.map((b) => b.x));
+      expect(truck.length - maxX).toBeLessThan(minX + 1);
+      // Tier 1 is loaded first, so it sits at the door.
+      const t1 = r.tiers.find((t) => t.index === 1)!;
+      expect(t1.x0 + t1.depth).toBeGreaterThan(truck.length - 101);
+    }
+  });
+});

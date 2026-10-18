@@ -79,8 +79,8 @@ export interface StabilityReport {
   tip: number;
   slide: number;
   overhang: number;
-  /** Carton faces at the door side of the load; held by the doors, not counted as risky. */
-  doorFace: number;
+  /** Carton faces at the open ends of the load; to be blocked or strapped, not counted as risky. */
+  endFace: number;
   flagged: number[];
   /** Bit flags per flagged carton: 1 tip, 2 slide, 4 overhang. */
   flags: number[];

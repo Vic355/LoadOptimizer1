@@ -28,7 +28,8 @@ function search(req: PlanRequest, attempt: (rng: () => number, noise: number, it
     if (!req.rules.safetyFirst) return planScore(boxes);
     let ordered = 0;
     for (const b of boxes) if (fixed.has(b.skuId)) ordered++;
-    return ordered * 1e15 - checkStability(boxes, req.truck).risky * RISK_PENALTY_CARTONS * 1e12 + planScore(boxes);
+    const risky = checkStability(boxes, req.truck, { physics: req.rules.physics, reversed: req.rules.fillFrom === 'door' }).risky;
+    return ordered * 1e15 - risky * RISK_PENALTY_CARTONS * 1e12 + planScore(boxes);
   };
   let best = attempt(rng, 0, 0);
   let bestScore = score(best.boxes);
@@ -79,10 +80,13 @@ export function runModel(model: ModelId, req: PlanRequest, onProgress?: (p: Sear
     },
     onProgress,
   );
-  const boxes = best.boxes;
+  // Attempts work in loading order from x = 0; filling from the door mirrors the plan along the truck.
+  const boxes = req.rules.fillFrom === 'door' ? best.boxes.map((b) => ({ ...b, x: req.truck.length - b.x - b.dx })) : best.boxes;
   if (best.meta) return summarise(model, req.rules, req.truck, req.lines, boxes, buildTiersFromBoxes(boxes, best.meta), evaluated, t0);
   const seg = req.freeSegmentDepth ?? 100;
-  for (const b of boxes) b.tier = Math.floor((b.x + b.dx / 2) / seg) + 1;
-  const tiers = buildTiersFromBoxes(boxes).map((t) => ({ ...t, x0: (t.index - 1) * seg, depth: seg }));
+  const fromDoor = req.rules.fillFrom === 'door';
+  const along = (b: PlacedBox) => (fromDoor ? req.truck.length - b.x - b.dx / 2 : b.x + b.dx / 2);
+  for (const b of boxes) b.tier = Math.floor(along(b) / seg) + 1;
+  const tiers = buildTiersFromBoxes(boxes).map((t) => ({ ...t, x0: fromDoor ? req.truck.length - t.index * seg : (t.index - 1) * seg, depth: seg }));
   return summarise(model, req.rules, req.truck, req.lines, boxes, tiers, evaluated, t0, true);
 }

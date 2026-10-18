@@ -1,46 +1,62 @@
 import type { EngineTruck, PlacedBox, StabilityReport } from './types';
+import { DEFAULT_PHYSICS, type PhysicsRules } from './rules';
 
-// Rule-based bump test. Instead of simulating physics, each carton is checked against the load
-// accelerations used for cargo securing (EN 12195-1, road transport): 0.8 g forward when braking,
-// 0.5 g backwards and 0.5 g sideways. A free-standing stack tips when acceleration x height is
-// more than gravity x half its base, i.e. when height / base > 1 / a.
+// Bump test, worked out the way a physics engine treats a rigid box on a surface. A push of
+// a g (as a share of gravity) acts on each carton; a bump of v g makes it lighter, leaving
+// (1 - v) g of grip. The carton slides when a > friction x (1 - v) and it has room to move.
+// A stack standing free above its neighbour by height H on a base B tips when
+// a x H > (1 - v) x B, i.e. when H > B x (1 - v) / a. Defaults: EN 12195-1 road transport.
 
-export const FORWARD_G = 0.8;
-const BACKWARD_G = 0.5;
-const SIDEWAYS_G = 0.5;
 /** Faces closer than this count as touching. */
 const TOUCH = 3;
-/** Cartons with more free room than this on a side can slide into it. */
-export const SLIDE_GAP = 10;
 const BUCKET = 25;
 
 export const TIP = 1;
 export const SLIDE = 2;
 export const OVERHANG = 4;
 
-type Axis = 'x' | 'y';
-interface Dir {
-  axis: Axis;
-  sign: 1 | -1;
-  g: number;
+export interface StabilityOptions {
+  physics?: PhysicsRules;
+  /**
+   * True when x = 0 is the door end instead of the cab (the tier builder works in loading order,
+   * so with "fill from the door" its coordinates are mirrored). It swaps braking and speeding up.
+   */
+  reversed?: boolean;
 }
-const DIRS: Dir[] = [
-  { axis: 'x', sign: -1, g: FORWARD_G },
-  { axis: 'x', sign: 1, g: BACKWARD_G },
-  { axis: 'y', sign: -1, g: SIDEWAYS_G },
-  { axis: 'y', sign: 1, g: SIDEWAYS_G },
-];
+
+/** Highest a tier of this depth may stand above its neighbour under push `g` before it tips. */
+export function maxStep(depth: number, g: number, physics: PhysicsRules): number {
+  return g > 0 ? (depth * (1 - physics.bumpG)) / g : Infinity;
+}
+
+/** Push in g towards x = 0 (`towardsStart`) or away from it, in the builder's coordinates. */
+export function pushAlongX(physics: PhysicsRules, towardsStart: boolean, reversed = false): number {
+  return towardsStart !== reversed ? physics.brakeG : physics.accelG;
+}
+
+type Axis = 'x' | 'y';
 
 const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0);
 
 /**
- * Flags cartons that could tip, slide or are not resting on their centre. The face of the load
- * at the door is not counted: it is held by the closed doors and should be blocked or strapped.
+ * Flags cartons that could tip, slide or are not resting on their centre. The open end faces of
+ * the load are not counted as risky: they are reported separately, to be blocked or strapped.
  */
-export function checkStability(boxes: PlacedBox[], truck: EngineTruck): StabilityReport {
+export function checkStability(boxes: PlacedBox[], truck: EngineTruck, opts: StabilityOptions = {}): StabilityReport {
+  const physics = opts.physics ?? DEFAULT_PHYSICS;
+  const gap = physics.slideGapCm;
+  const grip = Math.max(0, 1 - physics.bumpG);
+  const dirs: { axis: Axis; sign: 1 | -1; g: number }[] = [
+    { axis: 'x', sign: -1, g: pushAlongX(physics, true, opts.reversed) },
+    { axis: 'x', sign: 1, g: pushAlongX(physics, false, opts.reversed) },
+    { axis: 'y', sign: -1, g: physics.sideG },
+    { axis: 'y', sign: 1, g: physics.sideG },
+  ];
   const buckets = new Map<number, number[]>();
+  let loadStart = Infinity;
   let loadEnd = 0;
   boxes.forEach((b, i) => {
+    loadStart = Math.min(loadStart, b.x);
     loadEnd = Math.max(loadEnd, b.x + b.dx);
     for (let k = Math.floor(b.x / BUCKET); k <= Math.floor((b.x + b.dx - 1e-6) / BUCKET); k++) {
       const list = buckets.get(k);
@@ -61,10 +77,10 @@ export function checkStability(boxes: PlacedBox[], truck: EngineTruck): Stabilit
   };
 
   const flags: number[] = new Array(boxes.length).fill(0);
-  let doorFace = 0;
+  let endFace = 0;
   boxes.forEach((b, i) => {
     const top = b.z + b.dz;
-    const around = near(i, b.x - SLIDE_GAP - TOUCH, b.x + b.dx + SLIDE_GAP + TOUCH);
+    const around = near(i, b.x - gap - TOUCH, b.x + b.dx + gap + TOUCH);
 
     // Resting on its centre: the middle of the base must be over a supporting carton.
     if (b.z > 0.5) {
@@ -83,20 +99,20 @@ export function checkStability(boxes: PlacedBox[], truck: EngineTruck): Stabilit
       if (!centred || area < 0.5 * b.dx * b.dy) flags[i] |= OVERHANG;
     }
 
-    for (const d of DIRS) {
+    for (const d of dirs) {
       const lo = d.axis === 'x' ? b.x : b.y;
       const hi = d.axis === 'x' ? b.x + b.dx : b.y + b.dy;
       const size = hi - lo;
       const limit = d.axis === 'x' ? truck.length : truck.width;
       const face = d.sign > 0 ? hi : lo;
       const toWall = d.sign > 0 ? limit - face : face;
-      if (toWall <= SLIDE_GAP) continue;
-      if (d.axis === 'x' && d.sign > 0 && face >= loadEnd - TOUCH) {
-        doorFace++;
+      if (toWall <= gap) continue;
+      if (d.axis === 'x' && (d.sign > 0 ? face >= loadEnd - TOUCH : face <= loadStart + TOUCH)) {
+        endFace++;
         continue;
       }
       // Nearest obstacle on this side within reach, and the height of what stands beside this face.
-      // A carton with an obstacle within SLIDE_GAP can only lean or shift that far, so it is held.
+      // A carton with an obstacle within the slide gap can only lean or shift that far, so it is held.
       let free = toWall;
       let neighbourTop = 0;
       for (const j of around) {
@@ -109,11 +125,11 @@ export function checkStability(boxes: PlacedBox[], truck: EngineTruck): Stabilit
         const dist = d.sign > 0 ? olo - face : face - ohi;
         if (dist < -0.5) continue;
         if (overlap(b.z, top, o.z, o.z + o.dz) > 1) free = Math.min(free, dist);
-        if (dist <= SLIDE_GAP && o.z < top - 0.5) neighbourTop = Math.max(neighbourTop, o.z + o.dz);
+        if (dist <= gap && o.z < top - 0.5) neighbourTop = Math.max(neighbourTop, o.z + o.dz);
       }
-      if (free <= SLIDE_GAP) continue;
-      flags[i] |= SLIDE;
-      if (top - neighbourTop > size / d.g) flags[i] |= TIP;
+      if (free <= gap) continue;
+      if (d.g > physics.friction * grip) flags[i] |= SLIDE;
+      if (top - neighbourTop > maxStep(size, d.g, physics)) flags[i] |= TIP;
     }
   });
 
@@ -128,5 +144,5 @@ export function checkStability(boxes: PlacedBox[], truck: EngineTruck): Stabilit
     if (f & SLIDE) slide++;
     if (f & OVERHANG) overhang++;
   });
-  return { risky: flagged.length, tip, slide, overhang, doorFace, flagged, flags: flagged.map((i) => flags[i]) };
+  return { risky: flagged.length, tip, slide, overhang, endFace, flagged, flags: flagged.map((i) => flags[i]) };
 }
