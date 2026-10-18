@@ -25,7 +25,7 @@ export const t = {
   passwordMismatch: 'Kata sandi tidak sama.',
   passwordTooShort: 'Minimal 4 karakter.',
   wrongPassword: 'Kata sandi salah.',
-  viewModeNote: 'Anda bisa menghitung dan menambah atau mengubah SKU untuk diri sendiri. Database bersama (truk, tujuan, aturan model, dan SKU untuk semua pengguna) hanya diubah oleh master.',
+  viewModeNote: 'Anda bisa menghitung dan menambah atau mengubah SKU untuk diri sendiri. Aturan model juga bisa Anda coba sendiri. Database bersama (truk, tujuan, aturan, dan SKU untuk semua pengguna) hanya diubah oleh master.',
   masterModeNote: 'Perubahan di sini masuk ke database bersama. SKU pribadi bisa disimpan ke database dengan tombol "Simpan ke database".',
   lockNote: 'Kunci ini melindungi dari perubahan tidak sengaja di prototipe, bukan keamanan penuh.',
 
@@ -220,7 +220,8 @@ export const t = {
 
   // Rule settings
   rulesTitle: 'Aturan Model',
-  rulesIntro: 'Perubahan berlaku untuk optimasi berikutnya. Rencana yang sudah disimpan tetap memakai aturan saat itu.',
+  rulesIntro: 'Perubahan berlaku untuk optimasi berikutnya. Rencana yang sudah disimpan tetap memakai aturan saat itu. Aturan yang Anda ubah hanya berlaku untuk Anda di perangkat ini; hanya master yang bisa mengubah aturan bersama.',
+  savedForMe: 'Tersimpan untuk Anda',
   rulesReset: 'Kembalikan ke aturan awal',
   rulesSaved: 'Aturan tersimpan.',
   rule: {

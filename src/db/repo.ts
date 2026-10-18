@@ -1,6 +1,6 @@
 import type { SqlValue } from 'sql.js';
 import { execute, query } from './database';
-import { discardPersonal, personal, savePersonal } from './personal';
+import { discardPersonal, personal, personalRules, savePersonal } from './personal';
 import { MODEL_ORDER, withDefaults, type EngineSku, type EngineTruck, type ModelId, type ModelRules, type PlanResult } from '../engine';
 
 export type BodyType = 'box' | 'wingbox' | 'open' | 'container';
@@ -243,11 +243,15 @@ export const deleteSku = (id: number) => execute('DELETE FROM skus WHERE id = ?'
 
 // ---- Model rules ----
 
-export function loadRules(): Record<ModelId, ModelRules> {
+/** The shared database rules, with this user's personal rules on top unless `shared` is set. */
+export function loadRules(shared = false): Record<ModelId, ModelRules> {
   const rows = query<{ model: ModelId; rules_json: string }>('SELECT * FROM model_settings');
   const stored = new Map(rows.map((r) => [r.model, JSON.parse(r.rules_json) as Partial<ModelRules>]));
-  return Object.fromEntries(MODEL_ORDER.map((m) => [m, withDefaults(m, stored.get(m))])) as Record<ModelId, ModelRules>;
+  const mine = shared ? {} : personalRules();
+  return Object.fromEntries(MODEL_ORDER.map((m) => [m, withDefaults(m, mine[m] ?? stored.get(m))])) as Record<ModelId, ModelRules>;
 }
+
+export const hasPersonalRules = (model: ModelId) => personalRules()[model] != null;
 
 export const saveRules = (model: ModelId, rules: ModelRules) =>
   execute('INSERT INTO model_settings (model, rules_json) VALUES (?, ?) ON CONFLICT(model) DO UPDATE SET rules_json = excluded.rules_json', [model, JSON.stringify(rules)]);

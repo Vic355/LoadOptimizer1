@@ -5,6 +5,7 @@ import { t } from '../i18n/id';
 import { admin } from './admin';
 import { confirmDialog, fmt, h } from './dom';
 import { openSkuForm } from './sku-form';
+import * as personal from '../db/personal';
 import { discardAllPersonal, discardPersonal } from '../db/personal';
 
 type FieldType = 'text' | 'number' | 'bool' | 'select';
@@ -442,8 +443,10 @@ export class MasterData {
   // ---------- Model rules ----------
 
   private rules(): HTMLElement {
+    // Everyone can try rules for themselves; only the master can change the shared ones.
     const all = repo.loadRules();
-    const edit = this.canEdit;
+    const master = this.canEdit;
+    const edit = true;
     const card = (model: ModelId) => {
       const r: ModelRules = { ...all[model] };
       const check = (key: 'tiers' | 'lineOrder' | 'interlock' | 'respectSafeStack' | 'heavyBottom' | 'safetyFirst') => {
@@ -478,7 +481,7 @@ export class MasterData {
       return h(
         'article',
         { class: 'rule-card' },
-        h('h3', {}, t.models[model], h('span', { class: 'muted' }, ` · ${t.modelTagline[model]}`)),
+        h('h3', {}, t.models[model], h('span', { class: 'muted' }, ` · ${t.modelTagline[model]}`), repo.hasPersonalRules(model) ? h('span', { class: 'tag personal' }, t.personalNew) : null),
         h(
           'div',
           { class: 'form-grid one' },
@@ -511,15 +514,37 @@ export class MasterData {
             physics('slideGapCm', 0, 50, 1),
           ),
         ),
-        edit
-          ? h(
-              'div',
-              { class: 'actions' },
-              status,
-              h('button', { class: 'btn ghost', type: 'button', onclick: () => (repo.saveRules(model, { ...DEFAULT_RULES[model] }), (this.flash = `${t.models[model]}: ${t.rulesSaved}`), this.render()) }, t.rulesReset),
-              h('button', { class: 'btn primary', type: 'button', onclick: () => (repo.saveRules(model, r), (status.textContent = `${t.rulesSaved} ✓`)) }, t.save),
-            )
-          : null,
+        h(
+          'div',
+          { class: 'actions' },
+          status,
+          h(
+            'button',
+            {
+              class: 'btn ghost',
+              type: 'button',
+              onclick: () => {
+                personal.discardPersonalRules(model);
+                if (master) repo.saveRules(model, { ...DEFAULT_RULES[model] });
+                this.flash = `${t.models[model]}: ${t.rulesSaved}`;
+                this.render();
+              },
+            },
+            t.rulesReset,
+          ),
+          h('button', { class: master ? 'btn' : 'btn primary', type: 'button', onclick: () => (personal.savePersonalRules(model, r), (status.textContent = `${t.savedForMe} ✓`)) }, t.saveForMe),
+          master
+            ? h(
+                'button',
+                {
+                  class: 'btn primary',
+                  type: 'button',
+                  onclick: () => (repo.saveRules(model, r), personal.discardPersonalRules(model), (status.textContent = `${t.rulesSaved} ✓`)),
+                },
+                t.saveToDb,
+              )
+            : null,
+        ),
       );
     };
     return h(

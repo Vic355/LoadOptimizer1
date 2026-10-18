@@ -1,3 +1,4 @@
+import type { ModelId, ModelRules } from '../engine';
 import type { SkuInput } from './repo';
 
 // The user's own SKUs and SKU changes. They live in this browser only and are used by the
@@ -63,4 +64,40 @@ export function discardPersonal(id: number) {
 export function discardAllPersonal() {
   cache = { added: {}, edits: {} };
   persist();
+}
+
+// ---- Personal model rules ----
+// Same idea for the rules: a user can play with them, and they apply to this browser only.
+
+const RULES_KEY = 'tlo-personal-rules';
+let rulesCache: Partial<Record<ModelId, ModelRules>> | null = null;
+
+export function personalRules(): Partial<Record<ModelId, ModelRules>> {
+  if (rulesCache) return rulesCache;
+  try {
+    const raw = JSON.parse(localStorage.getItem(RULES_KEY) ?? 'null');
+    rulesCache = raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    rulesCache = {};
+  }
+  return rulesCache!;
+}
+
+function persistRules() {
+  try {
+    localStorage.setItem(RULES_KEY, JSON.stringify(rulesCache));
+  } catch {
+    // Storage blocked: personal rules last until the page is closed.
+  }
+  listeners.forEach((fn) => fn());
+}
+
+export function savePersonalRules(model: ModelId, rules: ModelRules) {
+  personalRules()[model] = rules;
+  persistRules();
+}
+
+export function discardPersonalRules(model: ModelId) {
+  delete personalRules()[model];
+  persistRules();
 }
