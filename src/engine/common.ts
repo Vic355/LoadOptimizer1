@@ -1,5 +1,6 @@
 import type { EngineLine, EngineSku, ModelId, PlacedBox, PlanResult, Tier, EngineTruck } from './types';
 import type { ModelRules } from './rules';
+import { checkStability } from './stability';
 
 export interface Orientation {
   dx: number;
@@ -140,6 +141,7 @@ export function summarise(
     plansEvaluated,
     elapsedMs: Math.round(performance.now() - startedAt),
     segmentTiers,
+    stability: checkStability(boxes, truck),
   };
 }
 

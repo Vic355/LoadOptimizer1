@@ -1,7 +1,7 @@
 // SQLite schema. Kept as plain SQL so the same tables can move to Cloudflare D1
 // or another SQL server later. Lengths in cm, weights in kg, volumes in m³.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -74,10 +74,13 @@ CREATE TABLE IF NOT EXISTS shipments (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- sku_json is the SKU as planned (personal SKUs and edits never reach the skus table), so
+-- sku_id is only a link back to master data and may point to a personal SKU (negative id).
 CREATE TABLE IF NOT EXISTS shipment_lines (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-  sku_id INTEGER NOT NULL REFERENCES skus(id),
+  sku_id INTEGER NOT NULL,
+  sku_json TEXT,
   qty INTEGER,
   position INTEGER NOT NULL
 );
@@ -105,3 +108,21 @@ CREATE TABLE IF NOT EXISTS model_settings (
   rules_json TEXT NOT NULL
 );
 `;
+
+/** Upgrades a stored database one version at a time, keeping its data. */
+export const MIGRATIONS: Record<number, string> = {
+  // 2 -> 3: shipment lines keep a snapshot of the SKU and may refer to personal SKUs.
+  2: `
+    CREATE TABLE shipment_lines_v3 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      sku_id INTEGER NOT NULL,
+      sku_json TEXT,
+      qty INTEGER,
+      position INTEGER NOT NULL
+    );
+    INSERT INTO shipment_lines_v3 (id, shipment_id, sku_id, qty, position) SELECT id, shipment_id, sku_id, qty, position FROM shipment_lines;
+    DROP TABLE shipment_lines;
+    ALTER TABLE shipment_lines_v3 RENAME TO shipment_lines;
+  `,
+};

@@ -70,6 +70,7 @@ export function printPlan({ plan, truck, destination, reference, skus, snapshot 
   const tierPages = Math.ceil(plan.tiers.length / TIERS_PER_PAGE);
   const pageCount = 1 + tierPages;
   const destText = destination ? `${destination.customer} · ${destination.city}${destination.zone ? ` · ${destination.zone}` : ''}` : '–';
+  const risky = new Set((plan.stability?.flagged ?? []).map((i) => plan.boxes[i]));
   const swatch = (id: number) => h('span', { class: 'p-sw', style: `background:${skuColor(idx(id))}` }, label(id));
 
   const cover = h(
@@ -128,6 +129,8 @@ export function printPlan({ plan, truck, destination, reference, skus, snapshot 
                 .join(' · '),
             )
           : null,
+        risky.size ? h('div', { class: 'p-unplaced' }, t.riskPrint(risky.size)) : null,
+        plan.stability?.doorFace ? h('p', { class: 'p-note' }, t.doorNote) : null,
         plan.segmentTiers ? h('p', { class: 'p-note' }, t.segmentNote) : plan.tiers.some((x) => x.interlocked) ? h('p', { class: 'p-note' }, t.interlockNote) : null,
         h('div', { class: 'p-signs' }, h('div', {}, h('div', { class: 'p-line' }), t.loaderSign), h('div', {}, h('div', { class: 'p-line' }), t.checkerSign)),
       ),
@@ -144,15 +147,24 @@ export function printPlan({ plan, truck, destination, reference, skus, snapshot 
     for (const b of boxes) {
       const front = b.x + b.dx >= tier.x0 + tier.depth - 0.5;
       const y = H - b.z - b.dz;
-      drawing.append(svg('rect', { x: b.y, y, width: b.dy, height: b.dz, fill: skuColor(idx(b.skuId)), 'fill-opacity': front ? 0.9 : 0.35, stroke: '#111', 'stroke-width': 0.7 }));
+      const warn = front && risky.has(b);
+      drawing.append(
+        svg('rect', { x: b.y, y, width: b.dy, height: b.dz, fill: skuColor(idx(b.skuId)), 'fill-opacity': front ? 0.9 : 0.35, stroke: warn ? '#c0141c' : '#111', 'stroke-width': warn ? 3 : 0.7 }),
+      );
       if (front && b.dy > 14 && b.dz > 10)
-        drawing.append(svg('text', { x: b.y + b.dy / 2, y: y + b.dz / 2 + 4, 'text-anchor': 'middle', 'font-size': Math.min(13, b.dz * 0.5), fill: '#fff', 'font-weight': 700 }, label(b.skuId)));
+        drawing.append(svg('text', { x: b.y + b.dy / 2, y: y + b.dz / 2 + 4, 'text-anchor': 'middle', 'font-size': Math.min(13, b.dz * 0.5), fill: '#fff', 'font-weight': 700 }, `${warn ? '⚠' : ''}${label(b.skuId)}`));
     }
     const grid = tier.columns ? ` · ${tier.layers} ${t.layersWord}${tier.interlocked ? `, ${t.interlockedShort}` : ''}` : '';
     return h(
       'article',
       { class: 'p-card' },
-      h('div', { class: 'p-card-head' }, h('strong', {}, `${tierWord} ${tier.index} / ${plan.tiers.length}`), h('span', {}, `${fmt.int(tier.total)} ${t.cartons}`)),
+      h(
+        'div',
+        { class: 'p-card-head' },
+        h('strong', {}, `${tierWord} ${tier.index} / ${plan.tiers.length}`),
+        boxes.some((b) => risky.has(b)) ? h('span', { class: 'p-warn' }, `⚠ ${boxes.filter((b) => risky.has(b)).length}`) : null,
+        h('span', {}, `${fmt.int(tier.total)} ${t.cartons}`),
+      ),
       drawing,
       h('div', { class: 'p-caption' }, `${t.viewFromDoor}${grid}`),
       h(

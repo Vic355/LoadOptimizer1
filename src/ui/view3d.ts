@@ -3,7 +3,15 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EngineTruck, PlacedBox, PlanResult } from '../engine';
 import { skuColor, tierColor } from './colors';
 
-export type ColorMode = 'sku' | 'tier';
+export type ColorMode = 'sku' | 'tier' | 'risk';
+
+/** Colour for a carton in the stability view, from its risk flags (1 tip, 2 slide, 4 overhang). */
+export function riskColor(flags: number): string {
+  if (flags & 1) return '#d64545';
+  if (flags & 4) return '#8a4fd1';
+  if (flags & 2) return '#e3a12f';
+  return '#b9c3cc';
+}
 
 /**
  * three.js scene of the truck cargo space. Engine axes map to three.js as
@@ -154,13 +162,15 @@ export class TruckView {
     const m = new THREE.Matrix4();
     const color = new THREE.Color();
     const gap = 0.6; // cm, so neighbouring cartons stay distinguishable
+    const risk = new Map<PlacedBox, number>();
+    plan.stability?.flagged.forEach((idx, k) => risk.set(plan.boxes[idx], plan.stability!.flags[k]));
     const edgePositions: number[] = [];
 
     visible.forEach((b, i) => {
       m.makeScale(b.dx - gap, b.dz - gap, b.dy - gap);
       m.setPosition(b.x + b.dx / 2, b.z + b.dz / 2, b.y + b.dy / 2);
       mesh.setMatrixAt(i, m);
-      const base = mode === 'sku' ? skuColor(skuOrder.indexOf(b.skuId)) : tierColor(b.tier);
+      const base = mode === 'sku' ? skuColor(skuOrder.indexOf(b.skuId)) : mode === 'tier' ? tierColor(b.tier) : riskColor(risk.get(b) ?? 0);
       color.set(base);
       if (highlightTier > 0 && b.tier !== highlightTier) color.lerp(new THREE.Color(0xdde3e8), 0.75);
       if (b === this.picked) color.lerp(new THREE.Color(0xffffff), 0.55);

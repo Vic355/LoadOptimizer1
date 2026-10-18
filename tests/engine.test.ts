@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, MODEL_ORDER, runModel, type EngineSku, type ModelId, type PlacedBox, type PlanRequest } from '../src/engine';
 import { supportFraction } from '../src/engine/common';
 import { rowPattern } from '../src/engine/tiers';
+import { checkStability, TIP } from '../src/engine/stability';
 
 const sku = (id: number, l: number, w: number, h: number, extra: Partial<EngineSku> = {}): EngineSku => ({
   id,
@@ -107,5 +108,45 @@ describe('packing models', () => {
     const counts = Object.fromEntries(MODEL_ORDER.map((m) => [m, runModel(m, reqFor(m)).totalCartons]));
     expect(counts.free).toBeGreaterThanOrEqual(counts.standard);
     expect(counts.mixed).toBeGreaterThanOrEqual(counts.standard * 0.97);
+  });
+});
+
+describe('stability check', () => {
+  const box = (x: number, y: number, z: number, dx = 60, dy = 40, dz = 35): PlacedBox => ({ skuId: 1, x, y, z, dx, dy, dz, tier: 1 });
+  const big = { length: 600, width: 245, height: 250 };
+
+  it('flags a lone tall column in open space', () => {
+    const column = [0, 35, 70, 105].map((z) => box(200, 100, z));
+    const r = checkStability(column, big);
+    expect(r.tip).toBeGreaterThan(0);
+    expect(r.flags.some((f) => f & TIP)).toBe(true);
+  });
+
+  it('accepts a full-width wall against the cab', () => {
+    const wall: PlacedBox[] = [];
+    for (let z = 0; z < 210; z += 35) for (let y = 0; y + 40 <= 245; y += 40) wall.push(box(0, y + 2.5, z));
+    expect(checkStability(wall, big).risky).toBe(0);
+  });
+
+  it('flags a carton not resting on its centre', () => {
+    const r = checkStability([box(0, 0, 0), box(0, 30, 35)], big);
+    expect(r.overhang).toBe(1);
+  });
+
+  it('rejects interlock patterns that leave wide gaps when a gap limit is set', () => {
+    expect(rowPattern(245, { dx: 60, dy: 40, dz: 35 }, 60, true, 0.6, 10).b).toBeNull();
+  });
+
+  it('standar is no less stable than bebas and campuran', () => {
+    const t2 = { length: 735, width: 245, height: 250 };
+    const order = [
+      { sku: sku(1, 60, 40, 35), qty: 180 },
+      { sku: sku(2, 58, 39, 30, { safeLayers: 5 }), qty: 120 },
+      { sku: sku(3, 45, 30, 28, { canLieDown: true, safeLayers: 7 }), qty: 150 },
+    ];
+    const risk = (m: ModelId) => runModel(m, { truck: t2, lines: order, rules: DEFAULT_RULES[m], timeBudgetMs: 300 }).stability!.risky;
+    const standard = risk('standard');
+    expect(standard).toBeLessThanOrEqual(risk('free'));
+    expect(standard).toBeLessThanOrEqual(risk('mixed'));
   });
 });

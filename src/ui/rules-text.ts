@@ -9,6 +9,8 @@ export function describeRules(r: ModelRules): string[] {
   if (r.tiers) out.push(d.mixing[r.mixing]);
   out.push(d.rotation[r.rotation], r.respectSafeStack ? d.safeOn : d.safeOff);
   if (r.heavyBottom) out.push(d.heavyOn);
+  if (r.tiers && r.maxGapCm > 0) out.push(d.gap(r.maxGapCm));
+  if (r.safetyFirst) out.push(d.safetyOn);
   out.push(d.search(r.searchSeconds));
   return out;
 }

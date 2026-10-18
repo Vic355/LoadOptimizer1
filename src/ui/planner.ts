@@ -6,9 +6,10 @@ import { t } from '../i18n/id';
 import { combobox } from './combobox';
 import { fmt, h } from './dom';
 import { skuColor } from './colors';
-import { TruckView, type ColorMode } from './view3d';
+import { TruckView, riskColor, type ColorMode } from './view3d';
 import { printPlan } from './print';
 import { describeRules } from './rules-text';
+import { openSkuForm } from './sku-form';
 
 interface Line {
   sku: Sku;
@@ -137,6 +138,7 @@ export class Planner {
           { class: 'opt' },
           h('strong', {}, s.name),
           s.is_dummy ? h('span', { class: 'tag' }, t.dummy) : null,
+          personalTag(s),
           h('div', { class: 'opt-meta' }, `${s.code} · ${fmt.dims(...repo.plannedDims(s))} cm · ${fmt.d3(s.volume_m3)} m³ · ${t.safeLayersShort(s.safe_stack_layers)}`),
         ),
       onPick: (s) => this.addLine(s, null),
@@ -161,7 +163,17 @@ export class Planner {
       this.truckSelect,
       this.truckNote,
       this.customBox,
-      h('div', { class: 'label-row' }, h('label', { for: 'sku-search' }, t.skuLines), h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.pasteDialog() }, t.pasteExcel)),
+      h(
+        'div',
+        { class: 'label-row' },
+        h('label', { for: 'sku-search' }, t.skuLines),
+        h(
+          'span',
+          { class: 'label-actions' },
+          h('button', { class: 'btn ghost small', type: 'button', onclick: () => openSkuForm(null, (s) => this.addLine(s, null)) }, `+ ${t.newSku}`),
+          h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.pasteDialog() }, t.pasteExcel),
+        ),
+      ),
       sku.el,
       h('p', { class: 'hint' }, t.qtyHint),
       this.linesBox,
@@ -238,6 +250,13 @@ export class Planner {
     const existing = this.lines.find((l) => l.sku.id === s.id);
     if (existing) existing.qty = qty ?? existing.qty;
     else this.lines.push({ sku: s, qty });
+    this.markStale();
+    this.renderLines();
+  }
+
+  /** After a SKU is edited, every line using it plans with the new size. */
+  private replaceSku(oldId: number, next: Sku) {
+    for (const l of this.lines) if (l.sku.id === oldId) l.sku = next;
     this.markStale();
     this.renderLines();
   }
@@ -357,7 +376,7 @@ export class Planner {
           h(
             'div',
             { class: 'line-main' },
-            h('div', { class: 'line-name' }, `${s.code} · ${s.name}`, s.packaging === 'bundle' ? h('span', { class: 'tag' }, t.bundle) : null, s.is_dummy ? h('span', { class: 'tag' }, t.dummy) : null),
+            h('div', { class: 'line-name' }, `${s.code} · ${s.name}`, s.packaging === 'bundle' ? h('span', { class: 'tag' }, t.bundle) : null, s.is_dummy ? h('span', { class: 'tag' }, t.dummy) : null, personalTag(s)),
             h('div', { class: 'line-meta' }, `${fmt.d3(s.volume_m3)} m³ · ${t.safeLayersShort(s.safe_stack_layers)} · ${fmt.dims(pl, pw, ph)} cm${modified ? ` (${t.modShort})` : ''}`),
           ),
           qty,
@@ -365,6 +384,7 @@ export class Planner {
             'div',
             { class: 'line-actions' },
             h('button', { class: 'icon', type: 'button', title: t.moveUp, 'aria-label': t.moveUp, disabled: i === 0, onclick: () => this.moveLine(i, i - 1) }, '↑'),
+            h('button', { class: 'icon', type: 'button', title: t.editSku, 'aria-label': t.editSku, onclick: () => openSkuForm(s, (next) => this.replaceSku(s.id, next)) }, '✎'),
             h('button', { class: 'icon', type: 'button', title: t.remove, 'aria-label': t.remove, onclick: () => this.removeLine(i) }, '×'),
           ),
         );
@@ -557,6 +577,7 @@ export class Planner {
             ? [
                 h('div', { class: 'mc-num' }, fmt.int(r.totalCartons), h('small', {}, ` ${t.cartons}`)),
                 h('div', { class: 'mc-meta' }, `${fmt.pct(r.volumeUtilization)} · ${fmt.int(r.tiers.length)} ${r.segmentTiers ? t.segments : t.tiers}`),
+                stabilityBadge(r),
                 h('div', { class: 'mc-sel' }, on ? t.chosen : t.pick),
               ]
             : h('div', { class: 'mc-wait' }, h('span', { class: 'spinner' }), t.running),
@@ -581,7 +602,9 @@ export class Planner {
     const mode = h(
       'div',
       { class: 'seg' },
-      ...(['sku', 'tier'] as ColorMode[]).map((c) => h('button', { type: 'button', class: this.colorMode === c ? 'on' : '', onclick: () => ((this.colorMode = c), this.renderStageTools(), this.update3d(false)) }, c === 'sku' ? t.colorBySku : t.colorByTier)),
+      ...(['sku', 'tier', 'risk'] as ColorMode[]).map((c) =>
+        h('button', { type: 'button', class: this.colorMode === c ? 'on' : '', onclick: () => ((this.colorMode = c), this.renderStageTools(), this.update3d(false)) }, c === 'sku' ? t.colorBySku : c === 'tier' ? t.colorByTier : t.colorByRisk),
+      ),
     );
     const current = this.upToTier || n;
     this.stageTools.replaceChildren(
@@ -614,6 +637,7 @@ export class Planner {
       h('div', {}, line ? `${line.sku.code} · ${line.sku.name}` : String(b.skuId)),
       h('div', { class: 'muted' }, t.pickedWhere(b.tier, below + 1, plan.segmentTiers)),
       h('div', { class: 'muted mono' }, `${fmt.dims(b.dx, b.dy, b.dz)} cm`),
+      ...[riskText(plan, b)].filter((x): x is HTMLDivElement => !!x),
     );
   }
 
@@ -654,6 +678,7 @@ export class Planner {
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.totalWeight), h('span', { class: 'kpi-value' }, `${fmt.int(plan.totalWeight)} kg`)),
         ),
       );
+      out.push(stabilityBlock(plan, this.colorMode === 'risk'));
       const unplaced = Object.entries(plan.unplaced);
       if (unplaced.length)
         out.push(
@@ -743,7 +768,7 @@ export class Planner {
       this.destination?.id ?? null,
       tr.id,
       { name: tr.name, length: tr.length, width: tr.width, height: tr.height },
-      this.lines.map((l) => ({ skuId: l.sku.id, qty: l.qty })),
+      this.lines.map((l) => ({ sku: l.sku, qty: l.qty })),
       plan,
     );
     this.say(`${t.saved} ✓`);
@@ -937,11 +962,8 @@ export class Planner {
       this.custom = { ...truck };
       this.renderCustomBox();
     }
-    const skus = new Map(repo.listSkus().map((s) => [s.id, s]));
-    this.lines = repo
-      .shipmentLines(saved.shipment_id)
-      .map((l) => ({ sku: skus.get(l.sku_id)!, qty: l.qty }))
-      .filter((l) => l.sku);
+    // The SKUs exactly as planned, so a reopened plan matches its saved result.
+    this.lines = repo.shipmentLines(saved.shipment_id);
     this.reference = saved.reference ?? '';
     this.refInput.value = this.reference;
     this.destCombo.setText(this.destination ? `${this.destination.customer} – ${this.destination.city}` : '');
@@ -978,4 +1000,39 @@ export class Planner {
     this.update3d(true);
     this.run();
   }
+}
+
+function personalTag(s: Sku) {
+  if (!s.personal) return null;
+  return h('span', { class: 'tag personal', title: t.personalNote }, s.personal === 'new' ? t.personalNew : t.personalEdited);
+}
+
+function stabilityBadge(r: PlanResult) {
+  const s = r.stability;
+  if (!s) return null;
+  return h('div', { class: `mc-risk ${s.risky ? 'bad' : 'ok'}` }, s.risky ? `⚠ ${t.stabilityRisk(s.risky)}` : `✓ ${t.stabilityOk}`);
+}
+
+function stabilityBlock(plan: PlanResult, legend: boolean) {
+  const s = plan.stability;
+  if (!s) return h('div', { class: 'stability' }, h('span', { class: 'kpi-label' }, t.stability), h('p', { class: 'hint' }, t.stabilityOld));
+  const item = (flag: number, label: string) => h('span', { class: 'chip' }, h('i', { style: `background:${riskColor(flag)}` }), label);
+  return h(
+    'div',
+    { class: `stability ${s.risky ? 'bad' : 'ok'}` },
+    h('span', { class: 'kpi-label' }, t.stability),
+    h('strong', {}, s.risky ? `⚠ ${t.stabilityRisk(s.risky)}` : `✓ ${t.stabilityOk}`),
+    s.risky ? h('div', { class: 'small' }, t.stabilityParts(s.tip, s.slide, s.overhang)) : null,
+    s.doorFace ? h('div', { class: 'small' }, t.doorNote) : null,
+    legend ? h('div', { class: 'risk-legend' }, item(1, t.riskTip), item(2, t.riskSlide), item(4, t.riskOverhang), item(0, t.riskNone)) : null,
+    h('p', { class: 'hint' }, t.stabilityHint),
+  );
+}
+
+function riskText(plan: PlanResult, b: PlacedBox) {
+  const s = plan.stability;
+  const k = s ? s.flagged.indexOf(plan.boxes.indexOf(b)) : -1;
+  if (!s || k < 0) return null;
+  const f = s.flags[k];
+  return h('div', { class: 'risk-text' }, `⚠ ${[f & 1 ? t.riskTip : '', f & 2 ? t.riskSlide : '', f & 4 ? t.riskOverhang : ''].filter(Boolean).join(' · ')}`);
 }

@@ -1,5 +1,6 @@
 import type { SqlValue } from 'sql.js';
 import { execute, query } from './database';
+import { discardPersonal, personal, savePersonal } from './personal';
 import { MODEL_ORDER, withDefaults, type EngineSku, type EngineTruck, type ModelId, type ModelRules, type PlanResult } from '../engine';
 
 export type BodyType = 'box' | 'wingbox' | 'open' | 'container';
@@ -49,6 +50,8 @@ export interface Sku {
   active: number;
   volume_m3: number;
   is_dummy: number;
+  /** Set on SKUs from the user's personal layer: a new SKU or a changed database SKU. */
+  personal?: 'new' | 'edited';
 }
 
 export interface SavedPlan {
@@ -143,13 +146,50 @@ export const deleteDestination = (id: number) => execute('DELETE FROM destinatio
 
 // ---- SKUs ----
 
-export function searchSkus(text: string, limit = 12): Sku[] {
-  const q = `%${text.trim()}%`;
-  return query<Sku>('SELECT * FROM skus WHERE active = 1 AND (code LIKE ? OR name LIKE ? OR product_group LIKE ?) ORDER BY name LIMIT ?', [q, q, q, limit]);
+const volume = (s: Pick<Sku, 'length_cm' | 'width_cm' | 'height_cm' | 'mod_length_cm' | 'mod_width_cm' | 'mod_height_cm'>) =>
+  ((s.length_cm + s.mod_length_cm) * (s.width_cm + s.mod_width_cm) * (s.height_cm + s.mod_height_cm)) / 1e6;
+
+/** SKUs exactly as stored in the shared database, without personal changes. */
+export const listMasterSkus = () => query<Sku>('SELECT * FROM skus ORDER BY code');
+
+/** The SKUs the calculator uses: database SKUs with the user's personal changes, plus personal SKUs. */
+export function listSkus(): Sku[] {
+  const { added, edits } = personal();
+  const merged = listMasterSkus().map((s) => {
+    const e = edits[s.id];
+    if (!e) return s;
+    const next = { ...s, ...e, id: s.id, personal: 'edited' as const };
+    return { ...next, volume_m3: volume(next) };
+  });
+  for (const [id, a] of Object.entries(added)) {
+    const s = { ...a, id: Number(id), personal: 'new' as const } as Sku;
+    merged.push({ ...s, volume_m3: volume(s) });
+  }
+  return merged.sort((p, q) => p.code.localeCompare(q.code));
 }
 
-export const listSkus = () => query<Sku>('SELECT * FROM skus ORDER BY code');
-export const skuByCode = (code: string) => query<Sku>('SELECT * FROM skus WHERE code = ?', [code.trim()])[0] ?? null;
+export function searchSkus(text: string, limit = 12): Sku[] {
+  const q = text.trim().toLowerCase();
+  return listSkus()
+    .filter((s) => s.active && (!q || `${s.code} ${s.name} ${s.product_group ?? ''}`.toLowerCase().includes(q)))
+    .sort((p, q2) => p.name.localeCompare(q2.name))
+    .slice(0, limit);
+}
+
+export const skuByCode = (code: string) => listSkus().find((s) => s.code === code.trim()) ?? null;
+const masterSkuByCode = (code: string) => query<Sku>('SELECT * FROM skus WHERE code = ?', [code.trim()])[0] ?? null;
+
+/** Saves a SKU change for this user only; the shared database is not touched. */
+export const savePersonalSku = (s: SkuInput) => savePersonal(s.id ?? null, { ...s, id: undefined });
+
+/** Master role: writes a personal SKU or change into the shared database and drops the personal copy. */
+export function publishSku(s: Sku): number {
+  const { id, personal: kind, volume_m3: _v, ...fields } = s;
+  const existing = kind === 'new' ? masterSkuByCode(s.code) : null;
+  const dbId = saveSku({ ...fields, id: kind === 'new' ? existing?.id : id });
+  discardPersonal(id);
+  return dbId;
+}
 
 /** Planning size of a SKU: measured outer size plus its size modifier. */
 export const plannedDims = (s: Sku): [number, number, number] => [s.length_cm + s.mod_length_cm, s.width_cm + s.mod_width_cm, s.height_cm + s.mod_height_cm];
@@ -191,7 +231,7 @@ export function upsertSkus(rows: SkuInput[]): { added: number; updated: number }
   let added = 0;
   let updated = 0;
   for (const r of rows) {
-    const existing = skuByCode(r.code);
+    const existing = masterSkuByCode(r.code);
     saveSku({ ...r, id: existing?.id });
     if (existing) updated++;
     else added++;
@@ -232,11 +272,13 @@ export function saveShipmentPlan(
   destinationId: number | null,
   truckId: number | null,
   truck: PlanTruck,
-  lines: { skuId: number; qty: number | null }[],
+  lines: { sku: Sku; qty: number | null }[],
   plan: PlanResult,
 ): number {
   const shipmentId = execute('INSERT INTO shipments (reference, destination_id, truck_type_id, truck_json) VALUES (?, ?, ?, ?)', [reference, destinationId, truckId, JSON.stringify(truck)]);
-  lines.forEach((l, i) => execute('INSERT INTO shipment_lines (shipment_id, sku_id, qty, position) VALUES (?, ?, ?, ?)', [shipmentId, l.skuId, l.qty, i]));
+  lines.forEach((l, i) =>
+    execute('INSERT INTO shipment_lines (shipment_id, sku_id, sku_json, qty, position) VALUES (?, ?, ?, ?, ?)', [shipmentId, l.sku.id, JSON.stringify(l.sku), l.qty, i]),
+  );
   return execute(
     'INSERT INTO load_plans (shipment_id, model, rules_json, total_cartons, tier_count, volume_utilization, result_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [shipmentId, plan.model, JSON.stringify(plan.rules), plan.totalCartons, plan.tiers.length, plan.volumeUtilization, JSON.stringify(plan)],
@@ -258,13 +300,14 @@ export const planResult = (planId: number): PlanResult | null => {
   return row ? (JSON.parse(row.result_json) as PlanResult) : null;
 };
 
-export const shipmentLines = (shipmentId: number) =>
-  query<{ sku_id: number; qty: number | null }>('SELECT sku_id, qty FROM shipment_lines WHERE shipment_id = ? ORDER BY position', [shipmentId]);
-
-export const skusByIds = (ids: number[]): Sku[] => {
-  const all = new Map(listSkus().map((s) => [s.id, s]));
-  return ids.map((id) => all.get(id)).filter((s): s is Sku => !!s);
-};
+/** A saved shipment's lines with each SKU as it was planned (older plans fall back to current data). */
+export function shipmentLines(shipmentId: number): { sku: Sku; qty: number | null }[] {
+  const rows = query<{ sku_id: number; sku_json: string | null; qty: number | null }>('SELECT sku_id, sku_json, qty FROM shipment_lines WHERE shipment_id = ? ORDER BY position', [shipmentId]);
+  const current = new Map(listSkus().map((s) => [s.id, s]));
+  return rows
+    .map((r) => ({ sku: r.sku_json ? (JSON.parse(r.sku_json) as Sku) : current.get(r.sku_id), qty: r.qty }))
+    .filter((l): l is { sku: Sku; qty: number | null } => !!l.sku);
+}
 
 export function updatePlanTracking(planId: number, status: PlanStatus, note: string | null, actual: Record<number, number | null>) {
   execute("UPDATE load_plans SET status = ?, planner_note = ?, actual_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", [status, note, JSON.stringify(actual), planId]);

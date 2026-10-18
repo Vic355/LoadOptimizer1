@@ -14,18 +14,19 @@ export const t = {
   themeDark: 'Mode gelap',
 
   // Admin lock
-  viewMode: 'Mode lihat',
-  editMode: 'Mode edit',
-  unlock: 'Buka kunci edit',
-  lock: 'Kunci',
-  adminPassword: 'Kata sandi admin',
-  setPassword: 'Atur kata sandi admin',
-  setPasswordHint: 'Belum ada kata sandi. Buat kata sandi untuk mengunci data master. Simpan baik-baik.',
+  viewMode: 'Pengguna',
+  editMode: 'Master',
+  unlock: 'Masuk sebagai master',
+  lock: 'Keluar dari master',
+  adminPassword: 'Kata sandi master',
+  setPassword: 'Atur kata sandi master',
+  setPasswordHint: 'Belum ada kata sandi. Buat kata sandi master untuk melindungi database bersama. Simpan baik-baik.',
   confirmPassword: 'Ulangi kata sandi',
   passwordMismatch: 'Kata sandi tidak sama.',
   passwordTooShort: 'Minimal 4 karakter.',
   wrongPassword: 'Kata sandi salah.',
-  viewModeNote: 'Semua orang bisa melihat dan menjalankan rencana. Hanya admin yang bisa mengubah data master dan aturan model.',
+  viewModeNote: 'Anda bisa menghitung dan menambah atau mengubah SKU untuk diri sendiri. Database bersama (truk, tujuan, aturan model, dan SKU untuk semua pengguna) hanya diubah oleh master.',
+  masterModeNote: 'Perubahan di sini masuk ke database bersama. SKU pribadi bisa disimpan ke database dengan tombol "Simpan ke database".',
   lockNote: 'Kunci ini melindungi dari perubahan tidak sengaja di prototipe, bukan keamanan penuh.',
 
   // Input
@@ -73,6 +74,21 @@ export const t = {
   bundle: 'bal',
   dummy: 'dummy',
 
+  newSku: 'SKU baru',
+  editSku: 'Ubah SKU',
+  saveForMe: 'Simpan untuk saya',
+  saveToDb: 'Simpan ke database',
+  skuFormHint: 'Disimpan hanya untuk Anda di perangkat ini dan langsung bisa dipakai menghitung. Database bersama tidak berubah.',
+  skuFormMasterHint: 'Anda masuk sebagai master: simpan untuk Anda saja, atau simpan ke database bersama untuk semua pengguna.',
+  personalNew: 'pribadi',
+  personalEdited: 'diubah',
+  personalNote: 'SKU bertanda "pribadi" atau "diubah" hanya ada di perangkat Anda. Database bersama tetap sama sampai master menyimpannya.',
+  publish: 'Simpan ke database',
+  discardPersonal: 'Batalkan perubahan saya',
+  discardAll: 'Hapus semua SKU pribadi',
+  confirmDiscardAll: 'Semua SKU pribadi dan perubahan SKU Anda dihapus dari perangkat ini. Lanjutkan?',
+  createMissing: 'Buat SKU baru',
+
   // Models
   models: {
     free: 'Bebas',
@@ -81,7 +97,7 @@ export const t = {
   } satisfies Record<ModelId, string>,
   modelTagline: {
     free: 'Geometri bebas untuk muatan terbanyak',
-    standard: 'Tier rapi, SKU dikelompokkan, pola mengunci',
+    standard: 'Tier rapi tanpa celah, SKU dikelompokkan, aman dulu',
     mixed: 'Tier Standar, sisa ruang diisi bebas',
   } satisfies Record<ModelId, string>,
   plansEvaluated: (n: number, ms: number) => `${n.toLocaleString('id-ID')} rencana dievaluasi dalam ${(ms / 1000).toLocaleString('id-ID', { maximumFractionDigits: 1 })} dtk`,
@@ -120,6 +136,22 @@ export const t = {
   pickedWhere: (tier: number, layer: number, segment: boolean) => `${segment ? 'Segmen' : 'Tier'} ${tier} · lapis ${layer} dari bawah`,
   cab: 'Kabin',
   door: 'Pintu',
+
+  // Stability (bump test)
+  stability: 'Cek stabilitas',
+  stabilityOk: 'Aman saat rem dan guncangan',
+  stabilityRisk: (n: number) => `${n.toLocaleString('id-ID')} karton berisiko`,
+  stabilityParts: (tip: number, slide: number, overhang: number) =>
+    [tip ? `${tip} bisa terguling` : '', slide ? `${slide} bisa bergeser` : '', overhang ? `${overhang} tidak bertumpu di tengah` : ''].filter(Boolean).join(' · '),
+  stabilityHint: 'Diuji dengan percepatan pengamanan muatan EN 12195-1: 0,8 g ke depan saat rem, 0,5 g ke belakang dan ke samping. Muka muatan di pintu ditahan pintu dan sebaiknya diganjal.',
+  stabilityOld: 'Rencana lama, belum dicek stabilitas.',
+  colorByRisk: 'Risiko',
+  riskTip: 'Bisa terguling',
+  riskSlide: 'Bisa bergeser (celah > 10 cm)',
+  riskOverhang: 'Tidak bertumpu di tengah',
+  riskNone: 'Aman',
+  doorNote: 'Ganjal atau ikat muka muatan di pintu.',
+  riskPrint: (n: number) => `Perhatian: ${n} karton berisiko (ditandai ⚠ di tier). Isi celah dengan ganjal atau ikat.`,
 
   // Summary
   summary: 'Ringkasan',
@@ -197,6 +229,8 @@ export const t = {
     rotation: 'Putar karton',
     respectSafeStack: 'Patuhi tinggi tumpukan aman SKU',
     heavyBottom: 'Yang berat di bawah',
+    maxGapCm: 'Celah maksimum dalam tier (cm, 0 = bebas)',
+    safetyFirst: 'Utamakan keamanan (stabilitas) di atas jumlah karton',
     searchSeconds: 'Waktu pencarian (detik)',
   },
   mixingOptions: { none: 'Tidak boleh', fill: 'Hanya untuk mengisi tier (grup produk sama dulu)', free: 'Bebas' },
@@ -213,6 +247,8 @@ export const t = {
     safeOn: 'Tinggi tumpukan aman dipatuhi (yang paling ketat dalam satu tumpukan).',
     safeOff: 'Tinggi tumpukan aman diabaikan; tumpukan sampai atap.',
     heavyOn: 'SKU berat diutamakan di bawah.',
+    gap: (cm: number) => `Pola yang meninggalkan celah lebih dari ${cm} cm tidak dipakai; kolom lurus dipusatkan agar celah terbagi ke dua dinding.`,
+    safetyOn: 'Keamanan diutamakan: rencana dengan karton berisiko kalah dari rencana yang lebih stabil, tier tidak dibuat jauh lebih tinggi dari tier sebelumnya, dan lapis atas hanya dipasang penuh.',
     search: (s: number) => `Mencari selama ${s} detik dan memilih rencana dengan karton terbanyak.`,
   },
 

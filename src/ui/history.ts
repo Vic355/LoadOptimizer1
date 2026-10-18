@@ -153,7 +153,7 @@ export class History {
     const reprint = () => {
       if (!result) return;
       const destination = p.destination_id ? repo.listDestinations().find((d) => d.id === p.destination_id) ?? null : null;
-      const skus = repo.skusByIds(repo.shipmentLines(p.shipment_id).map((l) => l.sku_id));
+      const skus = repo.shipmentLines(p.shipment_id).map((l) => l.sku);
       printPlan({ plan: result, truck, destination, reference: p.reference ?? '', skus, snapshot: null });
     };
     const remove = async () => {

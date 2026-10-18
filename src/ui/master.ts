@@ -4,6 +4,8 @@ import { DEFAULT_RULES, MODEL_ORDER, type ModelId, type ModelRules } from '../en
 import { t } from '../i18n/id';
 import { admin } from './admin';
 import { confirmDialog, fmt, h } from './dom';
+import { openSkuForm } from './sku-form';
+import { discardAllPersonal, discardPersonal } from '../db/personal';
 
 type FieldType = 'text' | 'number' | 'bool' | 'select';
 interface Field {
@@ -27,6 +29,12 @@ interface EntitySpec<T extends { id: number }> {
   searchText: (row: T) => string;
   toolbar?: () => Node[];
   defaults?: Record<string, unknown>;
+  /** Overrides the admin-only rule (SKUs can always be changed in the personal layer). */
+  editable?: boolean;
+  /** Replaces the generic form. */
+  openEditor?: (row: T | null) => void;
+  /** Replaces the default edit/delete buttons of a row. */
+  rowActions?: (row: T) => Node[];
 }
 
 type Tab = 'skus' | 'trucks' | 'destinations' | 'rules' | 'database';
@@ -78,7 +86,7 @@ export class MasterData {
         'section',
         { class: 'lock-banner open' },
         h('span', { class: 'lock-icon', 'aria-hidden': 'true' }, '🔓'),
-        h('div', {}, h('strong', {}, `${t.editMode}.`), ` ${t.lockNote}`),
+        h('div', {}, h('strong', {}, `${t.editMode}.`), ` ${t.masterModeNote} ${t.lockNote}`),
         h('button', { class: 'btn', type: 'button', onclick: () => admin.lock() }, t.lock),
       );
     return h(
@@ -103,7 +111,8 @@ export class MasterData {
       next?.focus();
       if (pos != null) next?.setSelectionRange(pos, pos);
     });
-    const edit = this.canEdit;
+    const edit = spec.editable ?? this.canEdit;
+    const openEditor = (r: T | null) => (spec.openEditor ? spec.openEditor(r) : this.openForm(spec, r));
     const table = h(
       'table',
       {},
@@ -120,8 +129,12 @@ export class MasterData {
               ? h(
                   'td',
                   { class: 'row-actions' },
-                  h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.openForm(spec, r) }, t.edit),
-                  h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (spec.remove(r), this.onChange(), this.render()) }, t.delete),
+                  ...(spec.rowActions
+                    ? spec.rowActions(r)
+                    : [
+                        h('button', { class: 'btn ghost small', type: 'button', onclick: () => openEditor(r) }, t.edit),
+                        h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (spec.remove(r), this.onChange(), this.render()) }, t.delete),
+                      ]),
                 )
               : null,
           ),
@@ -138,7 +151,7 @@ export class MasterData {
         search,
         h('span', { class: 'muted' }, t.rows(rows.length)),
         ...(edit && spec.toolbar ? spec.toolbar() : []),
-        h('button', { class: 'btn primary', type: 'button', disabled: !edit, onclick: () => this.openForm(spec, null) }, t.add),
+        h('button', { class: 'btn primary', type: 'button', disabled: !edit, onclick: () => openEditor(null) }, t.add),
       ),
       this.flash ? h('p', { class: 'message', role: 'status' }, this.flash) : null,
       spec.note ? h('p', { class: 'hint' }, spec.note) : null,
@@ -206,34 +219,27 @@ export class MasterData {
   // ---------- SKUs ----------
 
   private skuSpec(): EntitySpec<repo.Sku> {
-    const packagingOptions: [string, string][] = [
-      ['carton', t.packagings.carton],
-      ['bundle', t.packagings.bundle],
-    ];
+    const master = this.canEdit;
+    const done = () => (this.onChange(), this.render());
+    const hasPersonal = repo.listSkus().some((s) => s.personal);
     return {
       title: t.masterSkus,
-      note: t.dummyNote,
-      defaults: { mod_length_cm: 0, mod_width_cm: 0, mod_height_cm: 0, safe_stack_layers: 5, packaging: 'carton', active: 1, can_lie_down: 0, is_dummy: 0 },
-      fields: [
-        { key: 'code', label: t.code, type: 'text', required: true },
-        { key: 'name', label: t.name, type: 'text', required: true },
-        { key: 'length_cm', label: t.lengthCm, type: 'number', required: true },
-        { key: 'width_cm', label: t.widthCm, type: 'number', required: true },
-        { key: 'height_cm', label: t.heightCm, type: 'number', required: true },
-        { key: 'mod_length_cm', label: t.modLength, type: 'number' },
-        { key: 'mod_width_cm', label: t.modWidth, type: 'number' },
-        { key: 'mod_height_cm', label: t.modHeight, type: 'number' },
-        { key: 'weight_kg', label: t.weightKg, type: 'number' },
-        { key: 'safe_stack_layers', label: t.safeLayers, type: 'number', required: true },
-        { key: 'max_top_load_kg', label: t.topLoad, type: 'number' },
-        { key: 'product_group', label: t.productGroup, type: 'text' },
-        { key: 'packaging', label: t.packaging, type: 'select', options: packagingOptions },
-        { key: 'can_lie_down', label: t.canLieDown, type: 'bool' },
-        { key: 'active', label: t.active, type: 'bool' },
-        { key: 'is_dummy', label: t.isDummy, type: 'bool' },
-      ],
+      note: `${t.personalNote} ${t.dummyNote}`,
+      editable: true,
+      fields: [],
+      openEditor: (row) => openSkuForm(row, done),
       columns: [
-        { label: t.code, value: (r) => h('span', { class: 'mono' }, r.code, r.is_dummy ? h('span', { class: 'tag' }, t.dummy) : null) },
+        {
+          label: t.code,
+          value: (r) =>
+            h(
+              'span',
+              { class: 'mono' },
+              r.code,
+              r.is_dummy ? h('span', { class: 'tag' }, t.dummy) : null,
+              r.personal ? h('span', { class: 'tag personal' }, r.personal === 'new' ? t.personalNew : t.personalEdited) : null,
+            ),
+        },
         { label: t.name, value: (r) => r.name },
         { label: t.packaging, value: (r) => t.packagings[r.packaging] ?? r.packaging },
         { label: t.dims, value: (r) => fmt.dims(r.length_cm, r.width_cm, r.height_cm) },
@@ -247,10 +253,24 @@ export class MasterData {
         { label: t.active, value: (r) => (r.active ? t.yes : h('span', { class: 'tag warn' }, t.no)) },
       ],
       list: repo.listSkus,
-      save: (v) => repo.saveSku(v as unknown as repo.SkuInput),
+      save: () => undefined,
       remove: (r) => repo.deleteSku(r.id),
+      rowActions: (r) => [
+        h('button', { class: 'btn ghost small', type: 'button', onclick: () => openSkuForm(r, done) }, t.edit),
+        r.personal && master ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => (repo.publishSku(r), done()) }, t.publish) : null,
+        r.personal
+          ? h('button', { class: 'btn ghost small danger', type: 'button', onclick: () => (discardPersonal(r.id), done()) }, r.personal === 'new' ? t.delete : t.discardPersonal)
+          : master
+            ? h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (repo.deleteSku(r.id), done()) }, t.delete)
+            : null,
+      ].filter((x): x is HTMLButtonElement => !!x),
       searchText: (r) => `${r.code} ${r.name} ${r.product_group ?? ''}`,
-      toolbar: () => [h('button', { class: 'btn', type: 'button', onclick: () => this.importSkus() }, t.importSkus)],
+      toolbar: () => [
+        h('button', { class: 'btn', type: 'button', onclick: () => this.importSkus() }, t.importSkus),
+        hasPersonal
+          ? h('button', { class: 'btn ghost danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDiscardAll, t.discardAll, t.cancel)) && (discardAllPersonal(), done()) }, t.discardAll)
+          : null,
+      ].filter((x): x is HTMLButtonElement => !!x),
     };
   }
 
@@ -280,7 +300,7 @@ export class MasterData {
           if (i > 0 || dims.some((d) => d != null && !Number.isNaN(d))) skipped++;
           continue;
         }
-        const existing = repo.skuByCode(code);
+        const existing = repo.listMasterSkus().find((s) => s.code === code) ?? null;
         rows.push({
           ...(existing ?? {}),
           code,
@@ -306,7 +326,17 @@ export class MasterData {
         error.hidden = false;
         return;
       }
-      const { added, updated } = repo.upsertSkus(rows);
+      let added = 0;
+      let updated = 0;
+      if (this.canEdit) ({ added, updated } = repo.upsertSkus(rows));
+      else
+        for (const r of rows) {
+          // Users import into their personal layer: matching codes become personal changes.
+          const mine = repo.skuByCode(r.code);
+          repo.savePersonalSku({ ...r, id: mine?.id ?? (r as repo.Sku).id });
+          if (mine) updated++;
+          else added++;
+        }
       this.flash = t.importResult(added, updated, skipped);
       dialog.close();
       this.onChange();
@@ -416,7 +446,7 @@ export class MasterData {
     const edit = this.canEdit;
     const card = (model: ModelId) => {
       const r: ModelRules = { ...all[model] };
-      const check = (key: 'tiers' | 'lineOrder' | 'interlock' | 'respectSafeStack' | 'heavyBottom') => {
+      const check = (key: 'tiers' | 'lineOrder' | 'interlock' | 'respectSafeStack' | 'heavyBottom' | 'safetyFirst') => {
         const cb = h('input', { type: 'checkbox', checked: r[key], disabled: !edit });
         cb.addEventListener('change', () => (r[key] = cb.checked));
         return h('label', { class: 'check' }, cb, ` ${t.rule[key]}`);
@@ -426,7 +456,7 @@ export class MasterData {
         sel.addEventListener('change', () => (r[key] = sel.value as ModelRules[K]));
         return h('label', {}, t.rule[key], sel);
       };
-      const number = (key: 'interlockMinSupport' | 'searchSeconds', scale: number, min: number, max: number, step: number) => {
+      const number = (key: 'interlockMinSupport' | 'searchSeconds' | 'maxGapCm', scale: number, min: number, max: number, step: number) => {
         const input = h('input', { type: 'number', min, max, step, value: String(Math.round(r[key] * scale * 100) / 100), disabled: !edit });
         input.addEventListener('change', () => {
           const v = Math.min(max, Math.max(min, Number(input.value) || min));
@@ -451,6 +481,8 @@ export class MasterData {
           select('rotation', t.rotationOptions),
           check('respectSafeStack'),
           check('heavyBottom'),
+          number('maxGapCm', 1, 0, 100, 1),
+          check('safetyFirst'),
           number('searchSeconds', 1, 1, 30, 1),
         ),
         edit

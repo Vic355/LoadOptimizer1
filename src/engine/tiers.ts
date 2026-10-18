@@ -1,6 +1,7 @@
 import type { PlacedBox, PlanRequest, Tier } from './types';
 import { fillSpaces, type Space } from './blocks';
 import { fillerWeight, layerLimit, loadingSequence, orientations, supportFraction, type Orientation } from './common';
+import { FORWARD_G, checkStability } from './stability';
 
 /** One carton position in a row across the truck width; `turned` cartons are rotated 90°. */
 interface Slot {
@@ -32,6 +33,17 @@ function rowSupport(upper: Slot[], lower: Slot[]): number {
   return worst;
 }
 
+/** Widest empty space a row leaves: at the walls, between cartons, or behind a turned carton. */
+function largestGap(row: Slot[], width: number, depth: number): number {
+  let gap = 0;
+  let y = 0;
+  for (const s of row) {
+    gap = Math.max(gap, s.y - y, depth - s.dx);
+    y = s.y + s.dy;
+  }
+  return Math.max(gap, width - y);
+}
+
 /** Positions where two neighbouring cartons in a row meet (the row's two ends are not joints). */
 function joints(row: Slot[]): number[] {
   return row.slice(0, -1).map((s) => s.y + s.dy);
@@ -41,9 +53,10 @@ function joints(row: Slot[]): number[] {
  * Row patterns for a tier of one SKU. The even row is a straight row of the narrowest side;
  * the odd row offsets the joints, either by shifting half a carton (when the spare width allows)
  * or by turning cartons 90° at the ends so the row stays full. Patterns that leave a carton
- * with less support than `minSupport` are rejected, and the tier falls back to straight columns.
+ * with less support than `minSupport`, or (when `maxGap` > 0) an empty space wider than `maxGap`
+ * beside or behind a carton, are rejected, and the tier falls back to straight columns.
  */
-export function rowPattern(width: number, o: Orientation, depth: number, interlock: boolean, minSupport: number): Pattern {
+export function rowPattern(width: number, o: Orientation, depth: number, interlock: boolean, minSupport: number, maxGap = 0): Pattern {
   const n = Math.floor(width / o.dy);
   const a: Slot[] = Array.from({ length: n }, (_, i) => ({ y: i * o.dy, dx: o.dx, dy: o.dy }));
   if (!interlock || n < 2) return { a, b: null };
@@ -80,19 +93,41 @@ export function rowPattern(width: number, o: Orientation, depth: number, interlo
     const offset = joints(row).every((j) => aJoints.every((k) => Math.abs(j - k) > JOINT_TOLERANCE));
     if (!offset) continue;
     if (rowSupport(row, a) < minSupport - 1e-9 || rowSupport(a, row) < minSupport - 1e-9) continue;
+    if (maxGap > 0 && largestGap(row, width, depth) > maxGap + 1e-9) continue;
     if (!best || row.length > best.length) best = row;
   }
   return { a, b: best };
 }
 
+/**
+ * Height the tier stands as a solid wall across the truck: at each point across the width, the
+ * height stacked without a break from the floor, and the lowest of those. Empty strips at a wall
+ * no wider than `wallGap` (the centring gap) are ignored.
+ */
+function wallHeight(boxes: PlacedBox[], width: number, wallGap: number): number {
+  let lowest = Infinity;
+  for (let y = 2.5; y < width; y += 5) {
+    const here = boxes.filter((b) => b.y <= y && y <= b.y + b.dy).sort((p, q) => p.z - q.z);
+    let top = 0;
+    for (const b of here) if (b.z <= top + 0.5) top = Math.max(top, b.z + b.dz);
+    if (top === 0 && (y < wallGap || y > width - wallGap)) continue;
+    lowest = Math.min(lowest, top);
+  }
+  return lowest === Infinity ? 0 : lowest;
+}
+
 interface TierBuild {
   boxes: PlacedBox[];
   meta: Partial<Tier>;
+  /** Height of the tier's complete rows, which the next tier leans on when braking. */
+  fullTop: number;
 }
 
 /**
  * Builds one tier at `x`: the main SKU in its row pattern, layer by layer from the floor, then
  * (when mixing is allowed) other SKUs in the gaps beside, behind turned cartons and above it.
+ * With `safetyFirst` a tier rises no higher above the previous one than it can stand when
+ * braking, and upper layers are only laid as complete rows (a short row would leave a gap).
  */
 function buildTier(
   req: PlanRequest,
@@ -104,17 +139,24 @@ function buildTier(
   rng: () => number,
   noise: number,
   sequence: number[],
+  prevTop: number,
+  prevBoxes: PlacedBox[],
 ): TierBuild {
   const { truck, lines, rules } = req;
   const sku = lines[main].sku;
   const depth = o.dx;
-  const pattern = rowPattern(truck.width, o, depth, rules.interlock, rules.interlockMinSupport);
-  const maxLayers = Math.min(Math.floor(truck.height / o.dz), layerLimit(sku, rules));
+  const pattern = rowPattern(truck.width, o, depth, rules.interlock, rules.interlockMinSupport, rules.maxGapCm);
+  // Straight columns that leave too wide a gap at one wall are centred, splitting it between both walls.
+  const spare = truck.width - pattern.a.length * o.dy;
+  if (!pattern.b && rules.maxGapCm > 0 && spare > rules.maxGapCm) pattern.a = pattern.a.map((s) => ({ ...s, y: s.y + spare / 2 }));
+  const ceiling = rules.safetyFirst ? Math.min(truck.height, prevTop + depth / FORWARD_G) : truck.height;
+  const maxLayers = Math.max(1, Math.min(Math.floor(ceiling / o.dz), layerLimit(sku, rules)));
   const boxes: PlacedBox[] = [];
   const rows: Slot[][] = [];
 
   for (let k = 0; k < maxLayers && remaining[main] > 0; k++) {
     const row = k % 2 === 1 && pattern.b ? pattern.b : pattern.a;
+    if (rules.safetyFirst && k > 0 && remaining[main] < row.length) break;
     const placed: Slot[] = [];
     for (const slot of row) {
       if (remaining[main] <= 0) break;
@@ -147,15 +189,35 @@ function buildTier(
       if (truck.width - y > 1) gaps.push({ x, y, z, l: depth, w: truck.width - y, h: o.dz, stackCount: k, stackLimit: limit });
     });
     const top = rows.length * o.dz;
-    if (truck.height - top > 1) gaps.push({ x, y: 0, z: top, l: depth, w: truck.width, h: truck.height - top, stackCount: rows.length, stackLimit: limit });
+    if (ceiling - top > 1) gaps.push({ x, y: 0, z: top, l: depth, w: truck.width, h: ceiling - top, stackCount: rows.length, stackLimit: limit });
 
+    const giveBack = (b: PlacedBox) => remaining[lines.findIndex((l) => l.sku.id === b.skuId)]++;
+    const mainCount = boxes.length;
     for (const gap of gaps) {
       const fill = fillSpaces([gap], lines, remaining, { rules, rng, noise, lineWeight: weight, tierOf: () => tierNo });
       // Gaps may sit over other gaps, so keep only fillers that are fully supported.
       fill.sort((p, q) => p.z - q.z);
       for (const b of fill) {
         if (supportFraction(b, boxes) >= 0.999) boxes.push(b);
-        else remaining[lines.findIndex((l) => l.sku.id === b.skuId)]++;
+        else giveBack(b);
+      }
+    }
+    // Safety first: fillers that would tip or slide are left out, with anything resting on them.
+    if (rules.safetyFirst && boxes.length > mainCount) {
+      for (let pass = 0; pass < 4; pass++) {
+        const all = [...prevBoxes, ...boxes];
+        const flagged = new Set(checkStability(all, truck).flagged.map((i) => all[i]));
+        const keep: PlacedBox[] = boxes.slice(0, mainCount);
+        let dropped = false;
+        for (const b of boxes.slice(mainCount).sort((p, q) => p.z - q.z)) {
+          if (flagged.has(b) || supportFraction(b, keep) < 0.999) {
+            giveBack(b);
+            dropped = true;
+          } else keep.push(b);
+        }
+        boxes.length = 0;
+        boxes.push(...keep);
+        if (!dropped) break;
       }
     }
   }
@@ -163,6 +225,7 @@ function buildTier(
   return {
     boxes,
     meta: { columns: pattern.a.length, layers: rows.length, interlocked: !!pattern.b && rows.length > 1 },
+    fullTop: wallHeight(boxes, truck.width, rules.maxGapCm),
   };
 }
 
@@ -173,7 +236,7 @@ function rankOrientations(req: PlanRequest, line: number, spaceLeft: number) {
   return orientations(sku, rules.rotation)
     .filter((o) => o.dx <= spaceLeft && o.dy <= truck.width && o.dz <= truck.height)
     .map((o) => {
-      const p = rowPattern(truck.width, o, o.dx, rules.interlock, rules.interlockMinSupport);
+      const p = rowPattern(truck.width, o, o.dx, rules.interlock, rules.interlockMinSupport, rules.maxGapCm);
       const layers = Math.min(Math.floor(truck.height / o.dz), layerLimit(sku, rules));
       const perTier = Math.ceil(layers / 2) * p.a.length + Math.floor(layers / 2) * (p.b ?? p.a).length;
       return { o, interlocked: !!p.b && layers > 1, density: perTier / o.dx };
@@ -194,6 +257,8 @@ export function tierAttempt(req: PlanRequest, rng: () => number, noise: number):
   const meta = new Map<number, Partial<Tier>>();
   let x = 0;
   let tierNo = 0;
+  // The cab wall holds the first tier at any height.
+  let prevTop = Infinity;
   while (x < truck.length) {
     const left = truck.length - x;
     const fits = (i: number) =>
@@ -208,10 +273,13 @@ export function tierAttempt(req: PlanRequest, rng: () => number, noise: number):
     const ranked = rankOrientations(req, main, left);
     // Never trade an interlocking orientation for one that cannot interlock.
     const options = ranked.filter((r) => r.interlocked === ranked[0].interlocked);
-    // The greedy run takes the densest orientation; search runs sometimes try the runner-up.
-    const choice = noise > 0 && options.length > 1 && rng() < 0.3 ? options[1] : options[0];
+    // The greedy run takes the densest orientation; search runs sometimes try another. With safety
+    // first they try more, because flat walls of equal height matter more than density there.
+    const explore = rules.safetyFirst ? 0.5 : 0.3;
+    const choice = noise > 0 && options.length > 1 && rng() < explore ? options[1 + Math.floor(rng() * Math.min(2, options.length - 1))] : options[0];
     tierNo++;
-    const tier = buildTier(req, x, main, choice.o, tierNo, remaining, rng, noise, sequence);
+    const prevBoxes = rules.safetyFirst ? out.filter((b) => b.tier === tierNo - 1) : [];
+    const tier = buildTier(req, x, main, choice.o, tierNo, remaining, rng, noise, sequence, prevTop, prevBoxes);
     if (!tier.boxes.length) {
       remaining[main] = 0;
       tierNo--;
@@ -219,6 +287,7 @@ export function tierAttempt(req: PlanRequest, rng: () => number, noise: number):
     }
     out.push(...tier.boxes);
     meta.set(tierNo, tier.meta);
+    prevTop = tier.fullTop;
     x += choice.o.dx;
   }
   return { boxes: out, meta };

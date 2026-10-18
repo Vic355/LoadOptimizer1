@@ -100,14 +100,17 @@ main { padding: 16px; max-width: 1600px; margin: 0 auto; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 
 /* Planner layout: input | stage | summary, details full width */
-.planner { display: grid; gap: 14px; grid-template-columns: 340px minmax(0, 1fr) 320px; grid-template-areas: 'input stage summary' 'details details details'; align-items: start; }
+.planner { display: grid; gap: 14px; grid-template-columns: 340px minmax(0, 1fr) 320px; grid-template-areas: 'input stage summary' 'input details summary'; grid-template-rows: auto 1fr; align-items: start; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; min-width: 0; }
 .input { grid-area: input; display: flex; flex-direction: column; gap: 4px; }
 .stage { grid-area: stage; display: flex; flex-direction: column; gap: 10px; }
 .summary { grid-area: summary; }
 .details { grid-area: details; }
 @media (max-width: 1250px) {
-  .planner { grid-template-columns: 320px minmax(0, 1fr); grid-template-areas: 'input stage' 'summary stage' 'details details'; }
+  /* Tablet: the summary sits under the 3D view so neither column leaves a tall empty gap. */
+  .planner { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); grid-template-areas: 'input stage' 'input summary' 'details details'; grid-template-rows: auto 1fr auto; }
+  .canvas-host { height: min(52vh, 480px); }
+  .summary .kpis { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 }
 @media (max-width: 820px) {
   main { padding: 10px; }
@@ -391,3 +394,19 @@ input[type='date'] { padding: 7px 10px; border: 1px solid var(--line); border-ra
   .history { grid-template-columns: minmax(0, 1fr); }
   .history-detail { position: static; }
 }
+
+/* Personal SKUs and stability */
+.tag.personal { background: color-mix(in srgb, #2f6fde 16%, transparent); color: #2f6fde; border-color: transparent; }
+:root[data-theme='dark'] .tag.personal { color: #8fb4ff; }
+.label-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.mc-risk { font-size: 0.78rem; font-weight: 600; }
+.mc-risk.ok { color: var(--good); }
+.mc-risk.bad { color: var(--bad); }
+.stability { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); display: flex; flex-direction: column; gap: 3px; border-left: 3px solid var(--good); }
+.stability.bad { border-left-color: var(--bad); }
+.stability.bad strong { color: var(--bad); }
+.stability.ok strong { color: var(--good); }
+.stability .hint { margin-top: 4px; }
+.risk-legend { display: flex; flex-wrap: wrap; gap: 4px 2px; margin-top: 4px; }
+.risk-text { color: var(--bad); font-weight: 600; }
+.p-warn { color: #c0141c; font-weight: 700; }

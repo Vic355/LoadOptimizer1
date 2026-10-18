@@ -2,6 +2,13 @@ import type { ModelId, PlacedBox, PlanRequest, PlanResult, SearchProgress, Tier 
 import { fillSpaces, type Space } from './blocks';
 import { buildTiersFromBoxes, fillerWeight, initialRemaining, makeRng, planScore, summarise } from './common';
 import { tierAttempt } from './tiers';
+import { checkStability } from './stability';
+
+/**
+ * With safety first, one risky carton outweighs this many "fill max" cartons. Ordered (fixed
+ * quantity) cartons always come first: safety never leaves part of an order behind.
+ */
+const RISK_PENALTY_CARTONS = 10;
 
 const MAX_ITERATIONS = 200_000;
 const PROGRESS_EVERY_MS = 150;
@@ -16,8 +23,15 @@ function search(req: PlanRequest, attempt: (rng: () => number, noise: number, it
   const budget = req.timeBudgetMs ?? req.rules.searchSeconds * 1000;
   const rng = makeRng(req.seed ?? 20261018);
   const start = performance.now();
+  const fixed = new Set(req.lines.filter((l) => l.qty != null).map((l) => l.sku.id));
+  const score = (boxes: PlacedBox[]) => {
+    if (!req.rules.safetyFirst) return planScore(boxes);
+    let ordered = 0;
+    for (const b of boxes) if (fixed.has(b.skuId)) ordered++;
+    return ordered * 1e15 - checkStability(boxes, req.truck).risky * RISK_PENALTY_CARTONS * 1e12 + planScore(boxes);
+  };
   let best = attempt(rng, 0, 0);
-  let bestScore = planScore(best.boxes);
+  let bestScore = score(best.boxes);
   let evaluated = 1;
   let lastReport = start;
   while (evaluated < MAX_ITERATIONS) {
@@ -30,10 +44,10 @@ function search(req: PlanRequest, attempt: (rng: () => number, noise: number, it
     const noise = 0.1 + 0.4 * rng();
     const next = attempt(rng, noise, evaluated);
     evaluated++;
-    const score = planScore(next.boxes);
-    if (score > bestScore) {
+    const nextScore = score(next.boxes);
+    if (nextScore > bestScore) {
       best = next;
-      bestScore = score;
+      bestScore = nextScore;
     }
   }
   onProgress?.({ evaluated, bestCartons: best.boxes.length, fraction: 1 });

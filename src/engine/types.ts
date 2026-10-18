@@ -72,6 +72,20 @@ export interface Tier {
   uniform: boolean;
 }
 
+/** Result of the bump test (see stability.ts). Indexes refer to PlanResult.boxes. */
+export interface StabilityReport {
+  /** Cartons with at least one risk. */
+  risky: number;
+  tip: number;
+  slide: number;
+  overhang: number;
+  /** Carton faces at the door side of the load; held by the doors, not counted as risky. */
+  doorFace: number;
+  flagged: number[];
+  /** Bit flags per flagged carton: 1 tip, 2 slide, 4 overhang. */
+  flags: number[];
+}
+
 export interface PlanResult {
   model: ModelId;
   rules: ModelRules;
@@ -88,6 +102,8 @@ export interface PlanResult {
   elapsedMs: number;
   /** True when tiers are pseudo-tiers (fixed-depth segments) rather than real walls. */
   segmentTiers: boolean;
+  /** Missing on plans saved before the stability check existed. */
+  stability?: StabilityReport;
 }
 
 export interface SearchProgress {

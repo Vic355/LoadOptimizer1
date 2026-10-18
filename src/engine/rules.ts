@@ -21,6 +21,10 @@ export interface ModelRules {
   respectSafeStack: boolean;
   /** Prefer heavier SKUs at the bottom and lighter ones on top. */
   heavyBottom: boolean;
+  /** Widest empty space (cm) a tier pattern may leave beside or behind a carton; 0 means no limit. */
+  maxGapCm: number;
+  /** Rank plans by the stability check first and carton count second. */
+  safetyFirst: boolean;
   /** Search time for this model. */
   searchSeconds: number;
 }
@@ -35,6 +39,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     rotation: 'any',
     respectSafeStack: false,
     heavyBottom: true,
+    maxGapCm: 0,
+    safetyFirst: false,
     searchSeconds: 3,
   },
   standard: {
@@ -46,6 +52,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     rotation: 'sku',
     respectSafeStack: true,
     heavyBottom: true,
+    maxGapCm: 10,
+    safetyFirst: true,
     searchSeconds: 2,
   },
   mixed: {
@@ -57,6 +65,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     rotation: 'sku',
     respectSafeStack: true,
     heavyBottom: true,
+    maxGapCm: 10,
+    safetyFirst: false,
     searchSeconds: 3,
   },
 };
