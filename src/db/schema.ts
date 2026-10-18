@@ -1,7 +1,7 @@
 // SQLite schema. Kept as plain SQL so the same tables can move to Cloudflare D1
 // or another SQL server later. Lengths in cm, weights in kg, volumes in m³.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS shipment_lines (
 );
 
 -- actual_json maps a tier number to the count the checker wrote on the loader sheet.
+-- outcome_json records how the load went (fields: PlanOutcome in db/repo.ts); it is kept as JSON so fields can change.
 CREATE TABLE IF NOT EXISTS load_plans (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS load_plans (
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'final', 'loaded')),
   planner_note TEXT,
   actual_json TEXT,
+  outcome_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -125,4 +127,6 @@ export const MIGRATIONS: Record<number, string> = {
     DROP TABLE shipment_lines;
     ALTER TABLE shipment_lines_v3 RENAME TO shipment_lines;
   `,
+  // 3 -> 4: saved plans can record how the load went.
+  3: `ALTER TABLE load_plans ADD COLUMN outcome_json TEXT;`,
 };
