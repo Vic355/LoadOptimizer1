@@ -1,9 +1,29 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "loadoptimizer",
+  "main": "src/server/index.ts",
   "compatibility_date": "2026-10-12",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "loadoptimizer-db",
+      "database_id": "4b67c203-f22f-4eb8-b99e-822acd94a2a4"
+    }
+  ],
+  // PR preview builds use their own database, so trying a change never touches the shared data.
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "loadoptimizer-db-preview",
+        "database_id": "6ff50a90-b369-471e-bdf7-949904541eb4"
+      }
+    ]
   }
 }

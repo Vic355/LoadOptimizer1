@@ -194,11 +194,11 @@ export class Planner {
     const name = h('input', { type: 'text', value: this.custom.name, placeholder: 'mis. Tronton ODOL B 1234' });
     name.addEventListener('input', () => (this.custom.name = name.value.trim()));
     const keep = h('input', { type: 'checkbox' });
-    const apply = () => {
+    const apply = async () => {
       if (!(this.custom.length > 0 && this.custom.width > 0 && this.custom.height > 0)) return this.say(t.truckNoDims);
       if (keep.checked) {
         const label = this.custom.name || `${t.customTruckLabel} ${fmt.dims(this.custom.length, this.custom.width, this.custom.height)}`;
-        const id = repo.saveTruck({
+        const id = await repo.saveTruck({
           code: `ODOL-${Date.now().toString(36).toUpperCase()}`,
           name: label,
           variant: null,
@@ -759,11 +759,11 @@ export class Planner {
     if (!this.summaryBox.childElementCount) this.summaryBox.append(h('p', { class: 'muted' }, t.emptyState));
   }
 
-  private save() {
+  private async save() {
     const plan = this.selectedPlan();
     const tr = this.currentTruck();
     if (!plan || !tr) return;
-    repo.saveShipmentPlan(
+    await repo.saveShipmentPlan(
       this.reference || null,
       this.destination?.id ?? null,
       tr.id,

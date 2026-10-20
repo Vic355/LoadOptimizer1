@@ -1,20 +1,25 @@
+import { checkAdminKey, hasAdminPassword, setAdminKey } from '../db/database';
 import * as repo from '../db/repo';
 import { t } from '../i18n/id';
 import { h } from './dom';
 
 // Edit lock for master data and model rules. Anyone can view and plan; editing needs the admin
-// password. The hash lives in the database, so this guards against accidental edits in the
-// prototype, not against a determined user (that needs the server step).
+// password. With the shared database the server checks the password hash on every master change;
+// without a server the hash lives in the browser's database and only guards against accidents.
 
 const SESSION_KEY = 'tlo-admin-unlocked';
 const listeners = new Set<() => void>();
-let unlocked = (() => {
+/** The password hash for this tab's session, sent with master changes. */
+let key = (() => {
   try {
-    return sessionStorage.getItem(SESSION_KEY) === '1';
+    return sessionStorage.getItem(SESSION_KEY);
   } catch {
-    return false;
+    return null;
   }
 })();
+// Sessions from before the shared database stored '1' instead of the hash.
+if (key === '1') key = null;
+setAdminKey(key);
 
 async function hash(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(`truck-load-optimizer:${text}`);
@@ -22,10 +27,11 @@ async function hash(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function setUnlocked(v: boolean) {
-  unlocked = v;
+function setKey(v: string | null) {
+  key = v;
+  setAdminKey(v);
   try {
-    if (v) sessionStorage.setItem(SESSION_KEY, '1');
+    if (v) sessionStorage.setItem(SESSION_KEY, v);
     else sessionStorage.removeItem(SESSION_KEY);
   } catch {
     // Storage may be blocked; the lock then lasts for this page only.
@@ -35,15 +41,15 @@ function setUnlocked(v: boolean) {
 
 export const admin = {
   get unlocked() {
-    return unlocked;
+    return key != null;
   },
   onChange(fn: () => void) {
     listeners.add(fn);
   },
-  lock: () => setUnlocked(false),
+  lock: () => setKey(null),
   /** Asks for the password (or to create one on first use) and unlocks on success. */
   unlock(): Promise<boolean> {
-    const existing = repo.getMeta('admin_hash');
+    const existing = hasAdminPassword();
     return new Promise((resolve) => {
       const pw = h('input', { type: 'password', autocomplete: existing ? 'current-password' : 'new-password', required: true, id: 'admin-pw' });
       const pw2 = h('input', { type: 'password', autocomplete: 'new-password', id: 'admin-pw2' });
@@ -66,13 +72,14 @@ export const admin = {
       };
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const hashed = await hash(pw.value);
         if (!existing) {
           if (pw.value.length < 4) return fail(t.passwordTooShort);
           if (pw.value !== pw2.value) return fail(t.passwordMismatch);
-          repo.setMeta('admin_hash', await hash(pw.value));
-        } else if ((await hash(pw.value)) !== existing) return fail(t.wrongPassword);
+          await repo.setMeta('admin_hash', hashed);
+        } else if (!(await checkAdminKey(hashed))) return fail(t.wrongPassword);
         ok = true;
-        setUnlocked(true);
+        setKey(hashed);
         dialog.close();
       });
       dialog.append(form);

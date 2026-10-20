@@ -72,11 +72,11 @@ export function openSkuForm(sku: Sku | null, onSaved: (saved: Sku) => void) {
     const v = read();
     if (v) finish(repo.savePersonalSku({ ...v, id: sku?.id }));
   };
-  const saveMaster = () => {
+  const saveMaster = async () => {
     const v = read();
     if (!v) return;
     const base: Sku = { ...(v as Sku), id: sku?.id ?? 0, personal: sku?.personal ?? (sku ? 'edited' : 'new'), volume_m3: 0 };
-    finish(repo.publishSku(base));
+    finish(await repo.publishSku(base));
   };
 
   dialog.append(

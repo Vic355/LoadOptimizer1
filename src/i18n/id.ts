@@ -348,6 +348,11 @@ export const t = {
   confirmReset: 'Semua perubahan data akan hilang dan diganti data awal. Lanjutkan?',
   dbInfo:
     'Data disimpan sebagai database SQLite di browser ini dan tetap ada setelah halaman ditutup. Unduh file .sqlite untuk cadangan atau untuk dipindah ke komputer lain.',
+  dbInfoShared:
+    'Data disimpan di database bersama (Cloudflare D1): semua pengguna melihat data yang sama dan perubahan langsung tersimpan untuk semua. Unduh file .sqlite untuk cadangan.',
+  dbShared: 'Database bersama',
+  dbLocal: 'Hanya browser ini',
+  saveFailed: 'Perubahan tidak tersimpan ke database bersama.',
   dummyNote: 'SKU bertanda dummy adalah contoh sementara sampai data SKU asli tersedia.',
   truckEstimateNote:
     'Jenis truk dengan kisaran kubikasi punya tiga baris: Minimum, Rata-rata, dan Maksimum. Dimensi bertanda estimasi dihitung dari kubikasi (lebar dan tinggi tetap, panjang menyesuaikan); ganti dengan hasil ukur meteran.',

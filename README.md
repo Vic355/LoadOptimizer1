@@ -9,7 +9,17 @@ npm install
 npm run dev      # local dev server
 npm test         # engine tests (vitest)
 npm run build    # static files in dist/, host anywhere (Cloudflare Pages, intranet IIS/nginx)
+npx wrangler dev # the app with the Worker API and a local D1 database
 ```
+
+## Shared database (Cloudflare D1)
+
+Cloudflare deploys `main` as the Worker `loadoptimizer` (`wrangler.jsonc`): it serves `dist/` and the API in
+`src/server/index.ts`, bound to the D1 database `loadoptimizer-db` as `DB`. The browser loads all tables at start,
+queries its own sql.js copy, and sends each change as a named operation (`src/db/writes.ts`); the server checks the
+master password hash for master-data changes. A new, empty D1 database is filled with the seed data on the first
+visit, and the server applies `MIGRATIONS` when `SCHEMA_VERSION` goes up. Without the Worker (`npm run dev`, a plain
+static host) the app falls back to a database in the browser and the header shows "Hanya browser ini".
 
 ## Structure
 
@@ -17,8 +27,10 @@ npm run build    # static files in dist/, host anywhere (Cloudflare Pages, intra
 | --- | --- |
 | `src/db/schema.ts` | SQLite schema (trucks, destinations, allowed trucks per destination, SKUs, shipments, saved plans) |
 | `src/db/seed.ts`, `seed-destinations.ts` | Seed data: truck types, 161 destinations from logistics, 12 dummy SKUs |
-| `src/db/database.ts` | sql.js (SQLite in WebAssembly) persisted to IndexedDB; export/import `.sqlite` |
-| `src/db/repo.ts` | All queries. Replace this module with HTTP calls to move to a server database (D1, intranet SQL) |
+| `src/db/database.ts` | sql.js (SQLite in WebAssembly): a copy of the shared D1 data, or a local database in IndexedDB without a server; export/import `.sqlite` |
+| `src/db/repo.ts` | All queries; changes go through `writes.ts` |
+| `src/db/writes.ts`, `snapshot.ts` | Every change as a named operation, run by the Worker on D1 (or locally); table rows as JSON |
+| `src/server/index.ts` | Cloudflare Worker: static files plus `/api` on D1 |
 | `src/engine/` | Packing engine, runs in a Web Worker: `standard.ts` (one SKU per tier), `models.ts` (free and mixed, block building + randomised search), `blocks.ts` (guillotine block builder) |
 | `src/ui/` | Planner screen (input, model cards, 3D view, summary, details), master data CRUD, print sheet |
 | `src/i18n/id.ts` | Every user-facing string |
