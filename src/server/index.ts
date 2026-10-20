@@ -1,6 +1,7 @@
 import { MIGRATIONS, SCHEMA_SQL, SCHEMA_VERSION } from '../db/schema';
 import { D1_MAX_PARAMS, SECRET_META, TABLES, insertStatements, splitSql, type Row, type Snapshot, type SqlParam, type TableName } from '../db/snapshot';
 import { TOUCHES, WRITES, needsAdmin, type Store, type WriteOp } from '../db/writes';
+import { AskError, ask, type Ai } from './assistant';
 
 // Cloudflare Worker: serves the built app from ./dist and the shared database (D1, binding DB)
 // under /api. The browser loads every table once, queries its own copy, and sends changes here
@@ -10,6 +11,7 @@ import { TOUCHES, WRITES, needsAdmin, type Store, type WriteOp } from '../db/wri
 //   POST /api/write  {op, args}  runs one operation; returns its result and the tables it changed
 //   POST /api/unlock             checks the master password (X-Admin-Key: its hash)
 //   POST /api/restore            replaces all data (import a .sqlite file, reset to the seed data)
+//   POST /api/ask    {question}  the read-only help assistant (assistant.ts)
 
 interface D1Result<T> {
   results: T[];
@@ -26,6 +28,7 @@ interface D1Database {
 }
 interface Env {
   DB: D1Database;
+  AI?: Ai;
   ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
@@ -129,6 +132,7 @@ async function api(request: Request, env: Env, path: string): Promise<Response> 
     return json({ ok: true });
   }
   if (path === '/api/restore') return json(await restore(env.DB, request));
+  if (path === '/api/ask') return json(await ask(env, request));
   throw new HttpError(404, 'Not found');
 }
 
@@ -139,7 +143,7 @@ export default {
     try {
       return await api(request, env, path);
     } catch (err) {
-      const status = err instanceof HttpError ? err.status : 500;
+      const status = err instanceof HttpError || err instanceof AskError ? err.status : 500;
       return json({ error: err instanceof Error ? err.message : String(err) }, status);
     }
   },
