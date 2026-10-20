@@ -1,5 +1,4 @@
-import type { SqlValue } from 'sql.js';
-import { execute, query } from './database';
+import { query, write } from './database';
 import { discardPersonal, personal, personalRules, savePersonal } from './personal';
 import { MODEL_ORDER, withDefaults, type EngineSku, type EngineTruck, type ModelId, type ModelRules, type PlanResult } from '../engine';
 
@@ -112,20 +111,9 @@ export function truckVolume(t: Pick<TruckType, 'inner_length_cm' | 'inner_width_
 /** Size used to compare trucks: the estimated volume, else the volume from the dimensions. */
 export const truckSize = (t: TruckType) => t.est_volume_max ?? truckVolume(t) ?? 0;
 
-const TRUCK_COLUMNS = ['code', 'name', 'variant', 'body_type', 'est_volume_min', 'est_volume_max', 'inner_length_cm', 'inner_width_cm', 'inner_height_cm', 'dims_estimated', 'is_template', 'notes'] as const;
+export const saveTruck = (input: Omit<TruckType, 'id'> & { id?: number }) => write('saveTruck', input);
 
-export function saveTruck(input: Omit<TruckType, 'id'> & { id?: number }): number {
-  // A truck has one volume; the minimum column is kept equal to it so older data still reads the same.
-  const t = { ...input, est_volume_min: input.est_volume_max };
-  const values = TRUCK_COLUMNS.map((c) => t[c] as SqlValue);
-  if (t.id) {
-    execute(`UPDATE truck_types SET ${TRUCK_COLUMNS.map((c) => `${c}=?`).join(', ')} WHERE id=?`, [...values, t.id]);
-    return t.id;
-  }
-  return execute(`INSERT INTO truck_types (${TRUCK_COLUMNS.join(', ')}) VALUES (${TRUCK_COLUMNS.map(() => '?').join(',')})`, values);
-}
-
-export const deleteTruck = (id: number) => execute('DELETE FROM truck_types WHERE id = ?', [id]);
+export const deleteTruck = (id: number) => write('deleteTruck', id);
 
 // ---- Destinations ----
 
@@ -150,17 +138,9 @@ export const listedTrucks = (destinationId: number) =>
 /** The largest vehicle listed for the destination. Smaller trucks are always allowed. */
 export const maxTruckFor = (destinationId: number): TruckType | null => listedTrucks(destinationId)[0] ?? null;
 
-export function saveDestination(d: Omit<Destination, 'id'> & { id?: number }, truckIds: number[]): number {
-  const values: SqlValue[] = [d.ship_to_no, d.customer, d.city, d.zone, d.vehicle_type_raw];
-  let id = d.id;
-  if (id) execute('UPDATE destinations SET ship_to_no=?, customer=?, city=?, zone=?, vehicle_type_raw=? WHERE id=?', [...values, id]);
-  else id = execute('INSERT INTO destinations (ship_to_no, customer, city, zone, vehicle_type_raw) VALUES (?,?,?,?,?)', values);
-  execute('DELETE FROM destination_trucks WHERE destination_id = ?', [id]);
-  for (const t of truckIds) execute('INSERT INTO destination_trucks (destination_id, truck_type_id) VALUES (?, ?)', [id, t]);
-  return id;
-}
+export const saveDestination = (d: Omit<Destination, 'id'> & { id?: number }, truckIds: number[]) => write('saveDestination', d, truckIds);
 
-export const deleteDestination = (id: number) => execute('DELETE FROM destinations WHERE id = ?', [id]);
+export const deleteDestination = (id: number) => write('deleteDestination', id);
 
 // ---- SKUs ----
 
@@ -195,16 +175,15 @@ export function searchSkus(text: string, limit = 12): Sku[] {
 }
 
 export const skuByCode = (code: string) => listSkus().find((s) => s.code === code.trim()) ?? null;
-const masterSkuByCode = (code: string) => query<Sku>('SELECT * FROM skus WHERE code = ?', [code.trim()])[0] ?? null;
 
 /** Saves a SKU change for this user only; the shared database is not touched. */
 export const savePersonalSku = (s: SkuInput) => savePersonal(s.id ?? null, { ...s, id: undefined });
 
 /** Master role: writes a personal SKU or change into the shared database and drops the personal copy. */
-export function publishSku(s: Sku): number {
+export async function publishSku(s: Sku): Promise<number> {
   const { id, personal: kind, volume_m3: _v, ...fields } = s;
-  const existing = kind === 'new' ? masterSkuByCode(s.code) : null;
-  const dbId = saveSku({ ...fields, id: kind === 'new' ? existing?.id : id });
+  // A new personal SKU joins the database SKU with the same code, if there is one.
+  const dbId = kind === 'new' ? await write('upsertSku', fields) : await write('saveSku', { ...fields, id });
   discardPersonal(id);
   return dbId;
 }
@@ -228,36 +207,24 @@ export function toEngineSku(s: Sku): EngineSku {
   };
 }
 
-const SKU_COLUMNS = [
-  'code', 'name', 'length_cm', 'width_cm', 'height_cm', 'mod_length_cm', 'mod_width_cm', 'mod_height_cm', 'weight_kg',
-  'safe_stack_layers', 'max_top_load_kg', 'can_lie_down', 'packaging', 'product_group', 'active', 'is_dummy',
-] as const;
-
 export type SkuInput = Omit<Sku, 'id' | 'volume_m3'> & { id?: number };
 
-export function saveSku(s: SkuInput): number {
-  const values = SKU_COLUMNS.map((c) => (s[c] ?? (c.startsWith('mod_') ? 0 : null)) as SqlValue);
-  if (s.id) {
-    execute(`UPDATE skus SET ${SKU_COLUMNS.map((c) => `${c}=?`).join(', ')} WHERE id=?`, [...values, s.id]);
-    return s.id;
-  }
-  return execute(`INSERT INTO skus (${SKU_COLUMNS.join(', ')}) VALUES (${SKU_COLUMNS.map(() => '?').join(',')})`, values);
-}
+export const saveSku = (s: SkuInput) => write('saveSku', s);
 
 /** Inserts new SKUs and updates existing ones (matched by SAP material number). */
-export function upsertSkus(rows: SkuInput[]): { added: number; updated: number } {
+export async function upsertSkus(rows: SkuInput[]): Promise<{ added: number; updated: number }> {
   let added = 0;
   let updated = 0;
-  for (const r of rows) {
-    const existing = masterSkuByCode(r.code);
-    saveSku({ ...r, id: existing?.id });
-    if (existing) updated++;
-    else added++;
+  // A few hundred per request keeps each request within D1's query limit.
+  for (let i = 0; i < rows.length; i += 200) {
+    const r = await write('upsertSkus', rows.slice(i, i + 200));
+    added += r.added;
+    updated += r.updated;
   }
   return { added, updated };
 }
 
-export const deleteSku = (id: number) => execute('DELETE FROM skus WHERE id = ?', [id]);
+export const deleteSku = (id: number) => write('deleteSku', id);
 
 // ---- Model rules ----
 
@@ -271,14 +238,12 @@ export function loadRules(shared = false): Record<ModelId, ModelRules> {
 
 export const hasPersonalRules = (model: ModelId) => personalRules()[model] != null;
 
-export const saveRules = (model: ModelId, rules: ModelRules) =>
-  execute('INSERT INTO model_settings (model, rules_json) VALUES (?, ?) ON CONFLICT(model) DO UPDATE SET rules_json = excluded.rules_json', [model, JSON.stringify(rules)]);
+export const saveRules = (model: ModelId, rules: ModelRules) => write('saveRules', model, rules);
 
 // ---- Settings ----
 
 export const getMeta = (key: string) => query<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key])[0]?.value ?? null;
-export const setMeta = (key: string, value: string) =>
-  execute('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value]);
+export const setMeta = (key: string, value: string) => write('setMeta', key, value);
 
 // ---- Shipments and saved plans ----
 
@@ -289,23 +254,14 @@ export interface PlanTruck {
   height: number;
 }
 
-export function saveShipmentPlan(
+export const saveShipmentPlan = (
   reference: string | null,
   destinationId: number | null,
   truckId: number | null,
   truck: PlanTruck,
   lines: { sku: Sku; qty: number | null }[],
   plan: PlanResult,
-): number {
-  const shipmentId = execute('INSERT INTO shipments (reference, destination_id, truck_type_id, truck_json) VALUES (?, ?, ?, ?)', [reference, destinationId, truckId, JSON.stringify(truck)]);
-  lines.forEach((l, i) =>
-    execute('INSERT INTO shipment_lines (shipment_id, sku_id, sku_json, qty, position) VALUES (?, ?, ?, ?, ?)', [shipmentId, l.sku.id, JSON.stringify(l.sku), l.qty, i]),
-  );
-  return execute(
-    'INSERT INTO load_plans (shipment_id, model, rules_json, total_cartons, tier_count, volume_utilization, result_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [shipmentId, plan.model, JSON.stringify(plan.rules), plan.totalCartons, plan.tiers.length, plan.volumeUtilization, JSON.stringify(plan)],
-  );
-}
+) => write('saveShipmentPlan', reference, destinationId, truckId, truck, lines as never, plan as never);
 
 export const listSavedPlans = () =>
   query<SavedPlan>(
@@ -331,16 +287,9 @@ export function shipmentLines(shipmentId: number): { sku: Sku; qty: number | nul
     .filter((l): l is { sku: Sku; qty: number | null } => !!l.sku);
 }
 
-export function updatePlanTracking(planId: number, status: PlanStatus, note: string | null, actual: Record<number, number | null>, outcome: PlanOutcome) {
-  execute("UPDATE load_plans SET status = ?, planner_note = ?, actual_json = ?, outcome_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", [
-    status,
-    note,
-    JSON.stringify(actual),
-    JSON.stringify(outcome),
-    planId,
-  ]);
-}
+export const updatePlanTracking = (planId: number, status: PlanStatus, note: string | null, actual: Record<number, number | null>, outcome: PlanOutcome) =>
+  write('updatePlanTracking', planId, status, note, actual, outcome);
 
 export const parseOutcome = (p: Pick<SavedPlan, 'outcome_json'>): PlanOutcome => (p.outcome_json ? (JSON.parse(p.outcome_json) as PlanOutcome) : {});
 
-export const deleteShipment = (shipmentId: number) => execute('DELETE FROM shipments WHERE id = ?', [shipmentId]);
+export const deleteShipment = (shipmentId: number) => write('deleteShipment', shipmentId);

@@ -1,5 +1,5 @@
 import './styles.css';
-import { openDatabase } from './db/database';
+import { dbMode, openDatabase } from './db/database';
 import { t } from './i18n/id';
 import { h } from './ui/dom';
 import { Planner } from './ui/planner';
@@ -74,7 +74,7 @@ async function boot() {
     h(
       'header',
       { class: 'topbar' },
-      h('div', { class: 'brand' }, h('span', { class: 'logo', 'aria-hidden': 'true' }, '▣'), h('div', {}, h('h1', {}, t.appTitle), h('p', {}, t.appSubtitle)), h('span', { class: 'tag soon' }, t.prototype)),
+      h('div', { class: 'brand' }, h('span', { class: 'logo', 'aria-hidden': 'true' }, '▣'), h('div', {}, h('h1', {}, t.appTitle), h('p', {}, t.appSubtitle)), h('span', { class: 'tag soon' }, t.prototype), h('span', { class: dbMode() === 'shared' ? 'tag' : 'tag warn' }, dbMode() === 'shared' ? t.dbShared : t.dbLocal)),
       nav,
       h('div', { class: 'top-actions' }, lockBtn, themeBtn),
     ),

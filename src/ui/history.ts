@@ -173,9 +173,9 @@ export class History {
     renderTotal();
 
     const message = h('span', { class: 'muted', role: 'status' });
-    const save = () => {
+    const save = async () => {
       if (outcome.complaint === 'none' || !outcome.complaint) outcome.affectedCartons = null;
-      repo.updatePlanTracking(p.id, status, note.value.trim() || null, actual, outcome);
+      await repo.updatePlanTracking(p.id, status, note.value.trim() || null, actual, outcome);
       this.renderList();
       const shown = this.detailBox.querySelector('[role=status]');
       if (shown) shown.textContent = `${t.savedShort} ✓`;
@@ -188,7 +188,7 @@ export class History {
     };
     const remove = async () => {
       if (!(await confirmDialog(t.confirmDelete, t.delete, t.cancel))) return;
-      repo.deleteShipment(p.shipment_id);
+      await repo.deleteShipment(p.shipment_id);
       this.selectedId = null;
       this.renderList();
     };

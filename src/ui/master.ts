@@ -1,5 +1,5 @@
 import * as repo from '../db/repo';
-import { exportDatabase, importDatabase, resetDatabase, query } from '../db/database';
+import { dbMode, exportDatabase, importDatabase, resetDatabase, query } from '../db/database';
 import { DEFAULT_RULES, MODEL_ORDER, type ModelId, type ModelRules } from '../engine';
 import { t } from '../i18n/id';
 import { admin } from './admin';
@@ -24,8 +24,8 @@ interface EntitySpec<T extends { id: number }> {
   fields: Field[];
   columns: { label: string; value: (row: T) => string | Node; num?: boolean }[];
   list: () => T[];
-  save: (row: Record<string, unknown>, original: T | null) => void;
-  remove: (row: T) => void;
+  save: (row: Record<string, unknown>, original: T | null) => unknown;
+  remove: (row: T) => unknown;
   extraForm?: (row: T | null) => { el: HTMLElement; value: () => unknown };
   searchText: (row: T) => string;
   toolbar?: () => Node[];
@@ -134,7 +134,7 @@ export class MasterData {
                     ? spec.rowActions(r)
                     : [
                         h('button', { class: 'btn ghost small', type: 'button', onclick: () => openEditor(r) }, t.edit),
-                        h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (spec.remove(r), this.onChange(), this.render()) }, t.delete),
+                        h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (await spec.remove(r), this.onChange(), this.render()) }, t.delete),
                       ]),
                 )
               : null,
@@ -185,7 +185,7 @@ export class MasterData {
       error,
       h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dialog.close() }, t.cancel), h('button', { class: 'btn primary', type: 'submit' }, t.save)),
     );
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const out: Record<string, unknown> = { ...(row ?? spec.defaults ?? {}), id: row?.id };
       for (const f of spec.fields) {
@@ -201,7 +201,7 @@ export class MasterData {
       }
       if (extra) out.__extra = extra.value();
       try {
-        spec.save(out, row);
+        await spec.save(out, row);
       } catch (err) {
         error.textContent = String(err);
         error.hidden = false;
@@ -258,11 +258,11 @@ export class MasterData {
       remove: (r) => repo.deleteSku(r.id),
       rowActions: (r) => [
         h('button', { class: 'btn ghost small', type: 'button', onclick: () => openSkuForm(r, done) }, t.edit),
-        r.personal && master ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => (repo.publishSku(r), done()) }, t.publish) : null,
+        r.personal && master ? h('button', { class: 'btn ghost small', type: 'button', onclick: async () => (await repo.publishSku(r), done()) }, t.publish) : null,
         r.personal
           ? h('button', { class: 'btn ghost small danger', type: 'button', onclick: () => (discardPersonal(r.id), done()) }, r.personal === 'new' ? t.delete : t.discardPersonal)
           : master
-            ? h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (repo.deleteSku(r.id), done()) }, t.delete)
+            ? h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (await repo.deleteSku(r.id), done()) }, t.delete)
             : null,
       ].filter((x): x is HTMLButtonElement => !!x),
       searchText: (r) => `${r.code} ${r.name} ${r.product_group ?? ''}`,
@@ -288,7 +288,7 @@ export class MasterData {
       return Number.isFinite(n) ? n : NaN;
     };
     const yes = (s: string | undefined) => /^(y|ya|yes|1|true|boleh)$/i.test((s ?? '').trim());
-    const run = () => {
+    const run = async () => {
       const rows: repo.SkuInput[] = [];
       let skipped = 0;
       const lines = area.value.split(/\r?\n/).filter((x) => x.trim());
@@ -329,7 +329,7 @@ export class MasterData {
       }
       let added = 0;
       let updated = 0;
-      if (this.canEdit) ({ added, updated } = repo.upsertSkus(rows));
+      if (this.canEdit) ({ added, updated } = await repo.upsertSkus(rows));
       else
         for (const r of rows) {
           // Users import into their personal layer: matching codes become personal changes.
@@ -524,9 +524,9 @@ export class MasterData {
             {
               class: 'btn ghost',
               type: 'button',
-              onclick: () => {
+              onclick: async () => {
                 personal.discardPersonalRules(model);
-                if (master) repo.saveRules(model, { ...DEFAULT_RULES[model] });
+                if (master) await repo.saveRules(model, { ...DEFAULT_RULES[model] });
                 this.flash = `${t.models[model]}: ${t.rulesSaved}`;
                 this.render();
               },
@@ -540,7 +540,7 @@ export class MasterData {
                 {
                   class: 'btn primary',
                   type: 'button',
-                  onclick: () => (repo.saveRules(model, r), personal.discardPersonalRules(model), (status.textContent = `${t.rulesSaved} ✓`)),
+                  onclick: async () => (await repo.saveRules(model, r), personal.discardPersonalRules(model), (status.textContent = `${t.rulesSaved} ✓`)),
                 },
                 t.saveToDb,
               )
@@ -597,9 +597,9 @@ export class MasterData {
         'div',
         { class: 'form-grid narrow' },
         h('label', { for: 'company-name' }, t.companyName, company),
-        edit ? h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => (repo.setMeta('company_name', company.value.trim()), (message.textContent = `${t.savedShort} ✓`)) }, t.save)) : null,
+        edit ? h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: async () => (await repo.setMeta('company_name', company.value.trim()), (message.textContent = `${t.savedShort} ✓`)) }, t.save)) : null,
       ),
-      h('p', {}, t.dbInfo),
+      h('p', {}, dbMode() === 'shared' ? t.dbInfoShared : t.dbInfo),
       h('ul', { class: 'db-counts' }, ...counts.map((c) => h('li', {}, h('strong', {}, fmt.int(c.c)), ` ${c.n}`))),
       message,
       h(
