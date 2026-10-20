@@ -5,6 +5,21 @@ import { MODEL_ORDER, withDefaults, type EngineSku, type EngineTruck, type Model
 
 export type BodyType = 'box' | 'wingbox' | 'open' | 'container';
 export type PlanStatus = 'draft' | 'final' | 'loaded';
+export type PlanFollowed = 'yes' | 'changed';
+export type PlanComplaint = 'none' | 'shifted' | 'damaged' | 'collapsed';
+
+/** How a loaded plan went in real life; the history page records it so it can later train a model. */
+export interface PlanOutcome {
+  /** Date the truck was loaded (yyyy-mm-dd). */
+  loadedOn?: string;
+  /** Whether the loaders followed the plan or changed it. */
+  followed?: PlanFollowed;
+  complaint?: PlanComplaint;
+  /** Cartons damaged or moved, when there was a complaint. */
+  affectedCartons?: number | null;
+  /** Free text: what happened, route, driver feedback. */
+  note?: string;
+}
 
 export interface TruckType {
   id: number;
@@ -72,6 +87,7 @@ export interface SavedPlan {
   status: PlanStatus;
   planner_note: string | null;
   actual_json: string | null;
+  outcome_json: string | null;
   created_at: string;
 }
 
@@ -292,7 +308,7 @@ export function saveShipmentPlan(
 export const listSavedPlans = () =>
   query<SavedPlan>(
     `SELECT p.id, p.shipment_id, s.reference, s.destination_id, d.customer, d.city, d.zone, s.truck_type_id, t.name AS truck_name, s.truck_json,
-            p.model, p.total_cartons, p.tier_count, p.volume_utilization, p.status, p.planner_note, p.actual_json, p.created_at
+            p.model, p.total_cartons, p.tier_count, p.volume_utilization, p.status, p.planner_note, p.actual_json, p.outcome_json, p.created_at
      FROM load_plans p JOIN shipments s ON s.id = p.shipment_id
      LEFT JOIN destinations d ON d.id = s.destination_id
      LEFT JOIN truck_types t ON t.id = s.truck_type_id
@@ -313,8 +329,16 @@ export function shipmentLines(shipmentId: number): { sku: Sku; qty: number | nul
     .filter((l): l is { sku: Sku; qty: number | null } => !!l.sku);
 }
 
-export function updatePlanTracking(planId: number, status: PlanStatus, note: string | null, actual: Record<number, number | null>) {
-  execute("UPDATE load_plans SET status = ?, planner_note = ?, actual_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", [status, note, JSON.stringify(actual), planId]);
+export function updatePlanTracking(planId: number, status: PlanStatus, note: string | null, actual: Record<number, number | null>, outcome: PlanOutcome) {
+  execute("UPDATE load_plans SET status = ?, planner_note = ?, actual_json = ?, outcome_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", [
+    status,
+    note,
+    JSON.stringify(actual),
+    JSON.stringify(outcome),
+    planId,
+  ]);
 }
+
+export const parseOutcome = (p: Pick<SavedPlan, 'outcome_json'>): PlanOutcome => (p.outcome_json ? (JSON.parse(p.outcome_json) as PlanOutcome) : {});
 
 export const deleteShipment = (shipmentId: number) => execute('DELETE FROM shipments WHERE id = ?', [shipmentId]);
