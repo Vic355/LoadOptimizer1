@@ -34,6 +34,13 @@ The top bar has three pages: "Perencanaan" (planning), "Riwayat Rencana" (saved 
 7. Compare the three model cards (carton count, tiers, volume use, stability) and click "Pilih rencana ini" on the one to use.
 8. "Simpan rencana" stores it in "Riwayat Rencana". "Cetak lembar muat" opens the A4 landscape print preview; choose "Simpan sebagai PDF" in the print dialog to get a PDF.
 
+## Loader sheet (printed PDF)
+
+"Cetak lembar muat" shows a preview with two print styles: "Warna" (light colours) and "Hitam-putih (hemat tinta)" (black and white for black-only printers; SKUs are told apart by number and hatching, and it uses less ink). The choice is remembered on that device. The sheet has:
+- Page 1: company name (set in "Data Master" > "Database", "APP" when empty), truck, destination, totals, an overview drawing, the SKU list with numbers, warnings and signature lines.
+- "Urutan Tier untuk Loader": every tier as one box in a line from the door (PINTU, left) to the cab (KABIN, right), with a small drawing of the tier, the cartons per SKU number, a box to tick when the tier is done and a line for the actual count. Long loads wrap to more rows; each row says which tier it continues with. Loaders do not use the website, so this page is made for them, with pictures of the cab and door instead of words like front and back.
+- Tier pages: six tiers per page, each drawn as seen from the door looking toward the cab, with a bar showing where the tier sits in the truck, "◀ kiri / kanan ▶" (left and right as seen from the door), "↔ berjajar" (cartons side by side) and "↕ tumpuk" (cartons stacked up), counts per SKU, and boxes for actual count, photo and checker.
+
 If the input changes after a run, a note says to run the optimizer again.
 
 Fixed quantities are always loaded first; "maks" lines only fill the space left. The truck is never swapped automatically: cartons that do not fit are listed as "Tidak muat". To fit more, choose a larger truck, reduce quantities, or try another model.
@@ -113,7 +120,7 @@ Each model has its own rules. Changes apply to the next optimization; saved plan
 - How do I add a truck or fix truck sizes? Master mode, "Data Master" > "Truk".
 - How do I change which trucks a destination may use? Master mode, "Data Master" > "Tujuan", edit the destination.
 - Can I plan for a truck that is not in the list? Yes, with "Truk ODOL / ukuran khusus" on the planning page.
-- How do I get a PDF? "Cetak lembar muat", then choose "Simpan sebagai PDF" in the print dialog.
+- How do I get a PDF? "Cetak lembar muat", pick "Warna" or "Hitam-putih (hemat tinta)", then "Simpan sebagai PDF" in the print dialog.
 - My changes disappeared: personal SKUs and rules are tied to one browser; another browser or device will not have them.
 
 ## Known data gaps
