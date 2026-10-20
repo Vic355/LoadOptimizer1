@@ -32,6 +32,12 @@ export interface TruckType {
   inner_length_cm: number | null;
   inner_width_cm: number | null;
   inner_height_cm: number | null;
+  min_length_cm: number | null;
+  min_width_cm: number | null;
+  min_height_cm: number | null;
+  avg_length_cm: number | null;
+  avg_width_cm: number | null;
+  avg_height_cm: number | null;
   dims_estimated: number;
   is_template: number;
   notes: string | null;
@@ -105,6 +111,22 @@ export function toEngineTruck(t: Pick<TruckType, 'inner_length_cm' | 'inner_widt
   return { length: t.inner_length_cm ?? 0, width: t.inner_width_cm ?? 0, height: t.inner_height_cm ?? 0 };
 }
 
+/** Which size of a truck type a plan is made for: the smallest, the average or the largest of its kind. */
+export type TruckSizeKind = 'min' | 'avg' | 'max';
+export const TRUCK_SIZES: TruckSizeKind[] = ['min', 'avg', 'max'];
+
+/** The inner dimensions for one size; the maximum (inner_*) stands in where a size is not filled in. */
+export function truckDims(t: TruckType, kind: TruckSizeKind): EngineTruck {
+  const max = toEngineTruck(t);
+  if (kind === 'max') return max;
+  const d = { length: t[`${kind}_length_cm`] ?? 0, width: t[`${kind}_width_cm`] ?? 0, height: t[`${kind}_height_cm`] ?? 0 };
+  return d.length && d.width && d.height ? d : max;
+}
+
+/** True when the type has smaller sizes that differ from the maximum. */
+export const truckHasSizes = (t: TruckType) => TRUCK_SIZES.some((k) => k !== 'max' && fmtDimsKey(truckDims(t, k)) !== fmtDimsKey(truckDims(t, 'max')));
+const fmtDimsKey = (d: EngineTruck) => `${d.length}x${d.width}x${d.height}`;
+
 export function truckVolume(t: Pick<TruckType, 'inner_length_cm' | 'inner_width_cm' | 'inner_height_cm'>): number | null {
   return truckHasDims(t) ? (t.inner_length_cm! * t.inner_width_cm! * t.inner_height_cm!) / 1e6 : null;
 }
@@ -112,7 +134,7 @@ export function truckVolume(t: Pick<TruckType, 'inner_length_cm' | 'inner_width_
 /** Size used to compare trucks: the estimated volume, else the volume from the dimensions. */
 export const truckSize = (t: TruckType) => t.est_volume_max ?? truckVolume(t) ?? 0;
 
-const TRUCK_COLUMNS = ['code', 'name', 'variant', 'body_type', 'est_volume_min', 'est_volume_max', 'inner_length_cm', 'inner_width_cm', 'inner_height_cm', 'dims_estimated', 'is_template', 'notes'] as const;
+const TRUCK_COLUMNS = ['code', 'name', 'variant', 'body_type', 'est_volume_min', 'est_volume_max', 'inner_length_cm', 'inner_width_cm', 'inner_height_cm', 'min_length_cm', 'min_width_cm', 'min_height_cm', 'avg_length_cm', 'avg_width_cm', 'avg_height_cm', 'dims_estimated', 'is_template', 'notes'] as const;
 
 export function saveTruck(t: Omit<TruckType, 'id'> & { id?: number }): number {
   const values = TRUCK_COLUMNS.map((c) => t[c] as SqlValue);

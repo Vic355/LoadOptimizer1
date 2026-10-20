@@ -56,6 +56,9 @@ export class Planner {
   private destCard = h('div', { class: 'dest-card' });
   private truckSelect = h('select', { id: 'truck-select' });
   private truckNote = h('p', { class: 'hint' });
+  private sizeBox = h('div', { class: 'size-box' });
+  /** Which size of the chosen truck type the plan is made for; the minimum fits every truck of the type. */
+  private truckSizeKind: repo.TruckSizeKind = 'min';
   private customBox = h('details', { class: 'custom-truck' });
   private linesBox = h('div', { class: 'lines' });
   private runBtn = h('button', { class: 'btn primary run', type: 'button' }, t.run);
@@ -161,6 +164,7 @@ export class Planner {
       this.destCard,
       h('label', { for: 'truck-select' }, t.truck),
       this.truckSelect,
+      this.sizeBox,
       this.truckNote,
       this.customBox,
       h(
@@ -208,6 +212,12 @@ export class Planner {
           inner_length_cm: this.custom.length,
           inner_width_cm: this.custom.width,
           inner_height_cm: this.custom.height,
+          min_length_cm: null,
+          min_width_cm: null,
+          min_height_cm: null,
+          avg_length_cm: null,
+          avg_width_cm: null,
+          avg_height_cm: null,
           dims_estimated: 0,
           is_template: 1,
           notes: null,
@@ -230,6 +240,7 @@ export class Planner {
   }
 
   private truckChanged() {
+    this.renderSizeBox();
     this.markStale();
     this.renderTruckNote();
     this.update3d(true);
@@ -317,6 +328,7 @@ export class Planner {
       h('option', { value: CUSTOM, selected: this.truckId === CUSTOM }, `${t.customTruck}…`),
     );
     this.renderTruckNote();
+    this.renderSizeBox();
   }
 
   private currentTruck(): PlanningTruck | null {
@@ -327,7 +339,38 @@ export class Planner {
     }
     const tr = this.trucks.find((x) => x.id === this.truckId);
     if (!tr) return null;
-    return { id: tr.id, type: tr, name: repo.truckLabel(tr), ...repo.toEngineTruck(tr) };
+    const sized = repo.truckHasSizes(tr) && !tr.is_template;
+    return { id: tr.id, type: tr, name: sized ? `${repo.truckLabel(tr)} (${t.sizeShort[this.truckSizeKind]})` : repo.truckLabel(tr), ...(sized ? repo.truckDims(tr, this.truckSizeKind) : repo.toEngineTruck(tr)) };
+  }
+
+  /** The minimum / average / maximum picker for the chosen truck type, with the size it gives. */
+  private renderSizeBox() {
+    const tr = this.trucks.find((x) => x.id === this.truckId);
+    if (this.truckId === CUSTOM || !tr || tr.is_template || !repo.truckHasSizes(tr)) return this.sizeBox.replaceChildren();
+    const seg = h(
+      'div',
+      { class: 'seg', role: 'radiogroup', 'aria-label': t.sizeLabel },
+      ...repo.TRUCK_SIZES.map((k) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(k === this.truckSizeKind),
+            class: k === this.truckSizeKind ? 'on' : '',
+            onclick: () => ((this.truckSizeKind = k), this.renderSizeBox(), this.truckChanged()),
+          },
+          t.sizeNames[k],
+        ),
+      ),
+    );
+    const d = repo.truckDims(tr, this.truckSizeKind);
+    this.sizeBox.replaceChildren(
+      h('span', { class: 'label' }, t.sizeLabel),
+      seg,
+      h('p', { class: 'size-dims' }, `${fmt.dims(d.length, d.width, d.height)} cm · ${fmt.d1((d.length * d.width * d.height) / 1e6)} m³`),
+      h('p', { class: 'hint' }, t.sizeHint),
+    );
   }
 
   private renderTruckNote() {
@@ -956,8 +999,15 @@ export class Planner {
     const result = repo.planResult(saved.id);
     const truck = JSON.parse(saved.truck_json) as repo.PlanTruck;
     this.destination = saved.destination_id ? repo.listDestinations().find((d) => d.id === saved.destination_id) ?? null : null;
-    if (saved.truck_type_id && this.trucks.some((x) => x.id === saved.truck_type_id)) this.truckId = saved.truck_type_id;
-    else {
+    const savedType = saved.truck_type_id ? this.trucks.find((x) => x.id === saved.truck_type_id) : undefined;
+    if (savedType) {
+      this.truckId = savedType.id;
+      // Pick the size whose dimensions the plan was made with.
+      this.truckSizeKind = repo.TRUCK_SIZES.find((k) => {
+        const d = repo.truckDims(savedType, k);
+        return d.length === truck.length && d.width === truck.width && d.height === truck.height;
+      }) ?? this.truckSizeKind;
+    } else {
       this.truckId = CUSTOM;
       this.custom = { ...truck };
       this.renderCustomBox();

@@ -1,7 +1,20 @@
 // SQLite schema. Kept as plain SQL so the same tables can move to Cloudflare D1
 // or another SQL server later. Lengths in cm, weights in kg, volumes in m³.
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
+
+/**
+ * Fills the minimum and average inner dimensions of trucks that have none. The inner dimensions are
+ * the maximum; the length scales with the logistics team's volume range and width and height stay.
+ */
+export const BACKFILL_TRUCK_DIMS = `
+  UPDATE truck_types SET
+    min_length_cm = CASE WHEN est_volume_min > 0 AND est_volume_max > 0 THEN ROUND(inner_length_cm * est_volume_min / est_volume_max) ELSE inner_length_cm END,
+    avg_length_cm = CASE WHEN est_volume_min > 0 AND est_volume_max > 0 THEN ROUND(inner_length_cm * (est_volume_min + est_volume_max) / 2 / est_volume_max) ELSE inner_length_cm END,
+    min_width_cm = inner_width_cm, avg_width_cm = inner_width_cm,
+    min_height_cm = inner_height_cm, avg_height_cm = inner_height_cm
+  WHERE min_length_cm IS NULL AND avg_length_cm IS NULL;
+`;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -20,6 +33,13 @@ CREATE TABLE IF NOT EXISTS truck_types (
   inner_length_cm REAL,
   inner_width_cm REAL,
   inner_height_cm REAL,
+  -- inner_* is the maximum size; the minimum and average sizes are what a smaller truck of this type offers.
+  min_length_cm REAL,
+  min_width_cm REAL,
+  min_height_cm REAL,
+  avg_length_cm REAL,
+  avg_width_cm REAL,
+  avg_height_cm REAL,
   dims_estimated INTEGER NOT NULL DEFAULT 1,
   -- One-off trucks (ODOL or modified) saved from the input screen.
   is_template INTEGER NOT NULL DEFAULT 0,
@@ -129,4 +149,14 @@ export const MIGRATIONS: Record<number, string> = {
   `,
   // 3 -> 4: saved plans can record how the load went.
   3: `ALTER TABLE load_plans ADD COLUMN outcome_json TEXT;`,
+  // 4 -> 5: trucks get minimum and average inner dimensions next to the maximum.
+  4: `
+    ALTER TABLE truck_types ADD COLUMN min_length_cm REAL;
+    ALTER TABLE truck_types ADD COLUMN min_width_cm REAL;
+    ALTER TABLE truck_types ADD COLUMN min_height_cm REAL;
+    ALTER TABLE truck_types ADD COLUMN avg_length_cm REAL;
+    ALTER TABLE truck_types ADD COLUMN avg_width_cm REAL;
+    ALTER TABLE truck_types ADD COLUMN avg_height_cm REAL;
+    ${BACKFILL_TRUCK_DIMS}
+  `,
 };

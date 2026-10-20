@@ -371,9 +371,13 @@ export class MasterData {
         { key: 'body_type', label: t.bodyType, type: 'select', options: bodyOptions },
         { key: 'est_volume_min', label: t.estMin, type: 'number' },
         { key: 'est_volume_max', label: t.estMax, type: 'number' },
-        { key: 'inner_length_cm', label: t.lengthCm, type: 'number' },
-        { key: 'inner_width_cm', label: t.widthCm, type: 'number' },
-        { key: 'inner_height_cm', label: t.heightCm, type: 'number' },
+        ...(['min', 'avg', 'max'] as const).flatMap((kind) =>
+          (['length', 'width', 'height'] as const).map((axis) => ({
+            key: kind === 'max' ? `inner_${axis}_cm` : `${kind}_${axis}_cm`,
+            label: t.dimField(kind, axis),
+            type: 'number' as const,
+          })),
+        ),
         { key: 'notes', label: t.notes, type: 'text' },
         { key: 'dims_estimated', label: t.dimsEstimated, type: 'bool' },
         { key: 'is_template', label: t.isTemplate, type: 'bool' },
@@ -383,7 +387,19 @@ export class MasterData {
         { label: t.name, value: (r) => h('span', {}, repo.truckLabel(r), r.is_template ? h('span', { class: 'tag' }, t.isTemplate) : null) },
         { label: t.bodyType, value: (r) => t.bodyTypes[r.body_type] ?? r.body_type },
         { label: t.estVolume, value: (r) => (r.est_volume_max ? `${fmt.d1(r.est_volume_min ?? r.est_volume_max)}–${fmt.d1(r.est_volume_max)}` : '–'), num: true },
-        { label: t.innerDims, value: (r) => h('span', {}, fmt.dims(r.inner_length_cm, r.inner_width_cm, r.inner_height_cm), r.dims_estimated ? h('span', { class: 'tag warn' }, t.estimated) : null) },
+        {
+          label: t.innerDims,
+          value: (r) =>
+            h(
+              'span',
+              { class: 'size-lines' },
+              ...repo.TRUCK_SIZES.map((k) => {
+                const d = repo.truckDims(r, k);
+                return h('span', {}, h('span', { class: 'muted' }, `${t.sizeShort[k]} `), fmt.dims(d.length, d.width, d.height));
+              }),
+              r.dims_estimated ? h('span', { class: 'tag warn' }, t.estimated) : null,
+            ),
+        },
         { label: t.calcVolume, value: (r) => (repo.truckVolume(r) ? fmt.d1(repo.truckVolume(r)!) : '–'), num: true },
         { label: t.notes, value: (r) => r.notes ?? '' },
       ],

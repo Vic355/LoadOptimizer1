@@ -351,7 +351,13 @@ export const t = {
   dbInfo:
     'Data disimpan sebagai database SQLite di browser ini dan tetap ada setelah halaman ditutup. Unduh file .sqlite untuk cadangan atau untuk dipindah ke komputer lain.',
   dummyNote: 'SKU bertanda dummy adalah contoh sementara sampai data SKU asli tersedia.',
-  truckEstimateNote: 'Dimensi bertanda estimasi dihitung dari kubikasi; ganti dengan hasil ukur meteran.',
+  truckEstimateNote:
+    'Setiap jenis truk punya dimensi minimum, rata-rata, dan maksimum karena ukuran truk sejenis berbeda-beda. Dimensi bertanda estimasi dihitung dari kubikasi; ganti dengan hasil ukur meteran.',
+  sizeLabel: 'Ukuran truk',
+  sizeNames: { min: 'Minimum', avg: 'Rata-rata', max: 'Maksimum' },
+  sizeShort: { min: 'min', avg: 'rata-rata', max: 'maks' },
+  sizeHint: 'Truk sejenis ukurannya berbeda-beda. Rencana untuk ukuran minimum pasti muat di semua truk jenis ini; ukuran maksimum hanya muat di truk terbesar.',
+  dimField: (kind: 'min' | 'avg' | 'max', axis: 'length' | 'width' | 'height') => `${{ length: 'Panjang', width: 'Lebar', height: 'Tinggi' }[axis]} ${{ min: 'min', avg: 'rata-rata', max: 'maks' }[kind]} (cm)`,
   yes: 'Ya',
   no: 'Tidak',
   packaging: 'Kemasan',
