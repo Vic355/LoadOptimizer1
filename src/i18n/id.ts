@@ -351,7 +351,8 @@ export const t = {
   dbInfo:
     'Data disimpan sebagai database SQLite di browser ini dan tetap ada setelah halaman ditutup. Unduh file .sqlite untuk cadangan atau untuk dipindah ke komputer lain.',
   dummyNote: 'SKU bertanda dummy adalah contoh sementara sampai data SKU asli tersedia.',
-  truckEstimateNote: 'Dimensi bertanda estimasi dihitung dari kubikasi; ganti dengan hasil ukur meteran.',
+  truckEstimateNote:
+    'Jenis truk dengan kisaran kubikasi punya tiga baris: Minimum, Rata-rata, dan Maksimum. Dimensi bertanda estimasi dihitung dari kubikasi (lebar dan tinggi tetap, panjang menyesuaikan); ganti dengan hasil ukur meteran.',
   yes: 'Ya',
   no: 'Tidak',
   packaging: 'Kemasan',
@@ -370,8 +371,7 @@ export const t = {
   productGroup: 'Grup produk',
   active: 'Aktif',
   weightKg: 'Berat (kg)',
-  estMin: 'Est. kubikasi min (m³)',
-  estMax: 'Est. kubikasi maks (m³)',
+  estVolumeM3: 'Est. kubikasi (m³)',
   variant: 'Varian',
   bodyType: 'Jenis bak',
   bodyTypes: { box: 'Box', wingbox: 'Wingbox', open: 'Bak terbuka', container: 'Kontainer' } satisfies Record<BodyType, string>,

@@ -1,5 +1,6 @@
 import type { Database } from 'sql.js';
 import { DEFAULT_RULES } from '../engine/rules';
+import { SPLIT_TRUCK_SIZES } from './schema';
 import { DESTINATION_ROWS, DUMMY_SKUS, TRUCKS, vehicleCodes } from './seed-data';
 
 export function seedDatabase(db: Database): void {
@@ -14,6 +15,8 @@ export function seedDatabase(db: Database): void {
     truckIds.set(tr.code, db.exec('SELECT last_insert_rowid()')[0].values[0][0] as number);
   }
   insertTruck.free();
+  // The destination list refers to the largest size of each type; add the smaller ones.
+  db.exec(SPLIT_TRUCK_SIZES);
 
   const insertDest = db.prepare('INSERT INTO destinations (ship_to_no, customer, city, zone, vehicle_type_raw) VALUES (?, ?, ?, ?, ?)');
   const insertLink = db.prepare('INSERT OR IGNORE INTO destination_trucks (destination_id, truck_type_id) VALUES (?, ?)');

@@ -114,7 +114,9 @@ export const truckSize = (t: TruckType) => t.est_volume_max ?? truckVolume(t) ??
 
 const TRUCK_COLUMNS = ['code', 'name', 'variant', 'body_type', 'est_volume_min', 'est_volume_max', 'inner_length_cm', 'inner_width_cm', 'inner_height_cm', 'dims_estimated', 'is_template', 'notes'] as const;
 
-export function saveTruck(t: Omit<TruckType, 'id'> & { id?: number }): number {
+export function saveTruck(input: Omit<TruckType, 'id'> & { id?: number }): number {
+  // A truck has one volume; the minimum column is kept equal to it so older data still reads the same.
+  const t = { ...input, est_volume_min: input.est_volume_max };
   const values = TRUCK_COLUMNS.map((c) => t[c] as SqlValue);
   if (t.id) {
     execute(`UPDATE truck_types SET ${TRUCK_COLUMNS.map((c) => `${c}=?`).join(', ')} WHERE id=?`, [...values, t.id]);
