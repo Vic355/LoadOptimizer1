@@ -173,7 +173,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 .canvas-wrap { position: relative; border-radius: 10px; overflow: hidden; background: var(--scene); }
 .canvas-host { height: min(62vh, 560px); min-height: 320px; }
 .canvas-host canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-.axis-labels { position: absolute; left: 10px; right: 10px; bottom: 8px; display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); pointer-events: none; font-weight: 600; }
+/* Cab and door marks: placed in pixels by the 3D view so they stay on their truck ends. */
+.end-label { position: absolute; transform: translate(-50%, -50%); padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; color: var(--muted); background: color-mix(in srgb, var(--scene) 80%, transparent); pointer-events: none; white-space: nowrap; }
+.end-label[hidden] { display: none; }
 .no-webgl { padding: 30px; color: var(--muted); }
 .stage-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .slider { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; flex: 1 1 240px; }

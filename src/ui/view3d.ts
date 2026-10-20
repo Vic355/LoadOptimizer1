@@ -34,6 +34,8 @@ export class TruckView {
   private lastArgs: Parameters<TruckView['setPlan']> | null = null;
   private picked: PlacedBox | null = null;
   private raycaster = new THREE.Raycaster();
+  /** Labels for the cab and door ends; they follow those ends as the camera moves. */
+  private endLabels: { cab: HTMLElement; door: HTMLElement } | null = null;
   /** Called when a carton is clicked (null when the click hits empty space). */
   onPick: ((box: PlacedBox | null) => void) | null = null;
 
@@ -69,10 +71,34 @@ export class TruckView {
       this.controls.update();
       if (this.needsRender) {
         this.renderer.render(this.scene, this.camera);
+        this.placeEndLabels();
         this.needsRender = false;
       }
     };
     loop();
+  }
+
+  setEndLabels(cab: HTMLElement, door: HTMLElement) {
+    this.endLabels = { cab, door };
+    this.needsRender = true;
+  }
+
+  /** Puts each label on the screen position of its end of the truck, hiding it when that end is behind the camera. */
+  private placeEndLabels() {
+    if (!this.endLabels) return;
+    const truck = this.truck;
+    const w = this.host.clientWidth;
+    const h = this.host.clientHeight;
+    const put = (el: HTMLElement, x: number) => {
+      if (!truck || !truck.length) return void (el.hidden = true);
+      // Just outside the truck's end wall, at the middle of its width and a little above the floor.
+      const p = new THREE.Vector3(x, truck.height * 0.15, truck.width / 2).project(this.camera);
+      el.hidden = p.z > 1;
+      el.style.left = `${((p.x + 1) / 2) * w}px`;
+      el.style.top = `${((1 - p.y) / 2) * h}px`;
+    };
+    put(this.endLabels.cab, -Math.min(180, (truck?.length ?? 0) * 0.18) - 25);
+    put(this.endLabels.door, (truck?.length ?? 0) + 25);
   }
 
   static supported(): boolean {

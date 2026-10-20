@@ -63,6 +63,9 @@ export class Planner {
   private modelCards = h('div', { class: 'model-cards' });
   private stageTools = h('div', { class: 'stage-tools' });
   private canvasHost = h('div', { class: 'canvas-host' });
+  // Marks on the 3D view that follow the truck's cab and door ends as the camera moves.
+  private cabLabel = h('span', { class: 'end-label', hidden: true }, t.cab);
+  private doorLabel = h('span', { class: 'end-label', hidden: true }, t.door);
   private pickedBox = h('div', { class: 'picked', hidden: true });
   private summaryBox = h('div', { class: 'summary-body' });
   private detailsBox = h('section', { class: 'details panel' });
@@ -106,6 +109,7 @@ export class Planner {
     }
     if (this.view) return;
     this.view = new TruckView(this.canvasHost);
+    this.view.setEndLabels(this.cabLabel, this.doorLabel);
     this.view.onPick = (box) => {
       this.picked = box;
       this.renderPicked();
@@ -544,7 +548,7 @@ export class Planner {
       'section',
       { class: 'stage panel' },
       this.modelCards,
-      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.pickedBox, h('div', { class: 'axis-labels' }, h('span', {}, `◀ ${t.cab}`), h('span', {}, `${t.door} ▶`))),
+      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.pickedBox, this.cabLabel, this.doorLabel),
       this.stageTools,
       h('p', { class: 'hint' }, t.viewHint),
     );
