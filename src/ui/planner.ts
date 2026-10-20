@@ -544,7 +544,7 @@ export class Planner {
       'section',
       { class: 'stage panel' },
       this.modelCards,
-      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.pickedBox, h('div', { class: 'axis-labels' }, h('span', {}, `◀ ${t.cab}`), h('span', {}, `${t.door} ▶`))),
+      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.pickedBox),
       this.stageTools,
       h('p', { class: 'hint' }, t.viewHint),
     );

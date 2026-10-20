@@ -134,8 +134,6 @@ export const t = {
   noWebgl: 'Browser ini tidak mendukung WebGL, tampilan 3D tidak tersedia. Rencana tier tetap bisa dilihat dan dicetak.',
   picked: 'Karton dipilih',
   pickedWhere: (tier: number, layer: number, segment: boolean) => `${segment ? 'Segmen' : 'Tier'} ${tier} · lapis ${layer} dari bawah`,
-  cab: 'Kabin',
-  door: 'Pintu',
 
   // Stability (bump test)
   stability: 'Cek stabilitas',
