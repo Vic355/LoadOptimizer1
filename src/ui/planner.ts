@@ -304,9 +304,9 @@ export class Planner {
   private renderTruckSelect() {
     const max = this.destination ? repo.maxTruckFor(this.destination.id) : null;
     const option = (tr: TruckType) => {
-      const vol = tr.est_volume_max ? ` · ${tr.est_volume_min && tr.est_volume_min !== tr.est_volume_max ? `${fmt.int(tr.est_volume_min)}–` : ''}${fmt.int(tr.est_volume_max)} m³` : '';
+      const vol = tr.est_volume_max ? ` · ${tr.est_volume_min && tr.est_volume_min !== tr.est_volume_max ? `${fmt.d1(tr.est_volume_min)}–` : ''}${fmt.d1(tr.est_volume_max)} m³` : '';
       const dims = repo.truckHasDims(tr) ? ` · ${fmt.dims(tr.inner_length_cm, tr.inner_width_cm, tr.inner_height_cm)} cm` : '';
-      return h('option', { value: tr.id, selected: tr.id === this.truckId }, `${repo.truckLabel(tr)}${tr.is_template ? dims : vol}${max?.id === tr.id ? ` ✓ ${t.listedForDest}` : ''}`);
+      return h('option', { value: tr.id, selected: tr.id === this.truckId }, `${repo.truckLabel(tr)}${tr.is_template ? dims : `${vol}${dims}`}${max?.id === tr.id ? ` ✓ ${t.listedForDest}` : ''}`);
     };
     const standard = this.trucks.filter((x) => !x.is_template);
     const templates = this.trucks.filter((x) => x.is_template);
@@ -877,7 +877,7 @@ export class Planner {
           h('dt', {}, t.innerDims),
           h('dd', {}, `${fmt.dims(tr.length, tr.width, tr.height)} cm`, tr.type?.dims_estimated ? h('span', { class: 'tag warn' }, t.estimated) : null),
           h('dt', {}, t.estVolume),
-          h('dd', {}, tr.type?.est_volume_max ? `${fmt.d1(tr.type.est_volume_min ?? tr.type.est_volume_max)}–${fmt.d1(tr.type.est_volume_max)} m³` : '–'),
+          h('dd', {}, tr.type?.est_volume_max ? `${tr.type.est_volume_min && tr.type.est_volume_min !== tr.type.est_volume_max ? `${fmt.d1(tr.type.est_volume_min)}–` : ''}${fmt.d1(tr.type.est_volume_max)} m³` : '–'),
           h('dt', {}, t.calcVolume),
           h('dd', {}, `${fmt.d2((tr.length * tr.width * tr.height) / 1e6)} m³`),
           h('dt', {}, t.bodyType),

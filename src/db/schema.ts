@@ -1,7 +1,24 @@
 // SQLite schema. Kept as plain SQL so the same tables can move to Cloudflare D1
 // or another SQL server later. Lengths in cm, weights in kg, volumes in m³.
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
+
+/**
+ * Splits every truck type that has a volume range (the logistics team's "min - max") into three
+ * entries: Minimum and Rata-rata (average) are added, and the existing row becomes the Maksimum.
+ * Width and height stay and the length scales with the volume, so the new dimensions are estimates.
+ * Types with a single volume, and one-off trucks, are left alone.
+ */
+export const SPLIT_TRUCK_SIZES = `
+  INSERT INTO truck_types (code, name, variant, body_type, est_volume_min, est_volume_max, inner_length_cm, inner_width_cm, inner_height_cm, dims_estimated, is_template, notes)
+    SELECT code || '_MIN', name, 'Minimum', body_type, est_volume_min, est_volume_min, ROUND(inner_length_cm * est_volume_min / est_volume_max), inner_width_cm, inner_height_cm, dims_estimated, 0, notes
+    FROM truck_types WHERE is_template = 0 AND variant IS NULL AND est_volume_min > 0 AND est_volume_max > est_volume_min;
+  INSERT INTO truck_types (code, name, variant, body_type, est_volume_min, est_volume_max, inner_length_cm, inner_width_cm, inner_height_cm, dims_estimated, is_template, notes)
+    SELECT code || '_AVG', name, 'Rata-rata', body_type, (est_volume_min + est_volume_max) / 2, (est_volume_min + est_volume_max) / 2, ROUND(inner_length_cm * (est_volume_min + est_volume_max) / 2 / est_volume_max), inner_width_cm, inner_height_cm, dims_estimated, 0, notes
+    FROM truck_types WHERE is_template = 0 AND variant IS NULL AND est_volume_min > 0 AND est_volume_max > est_volume_min;
+  UPDATE truck_types SET variant = 'Maksimum', est_volume_min = est_volume_max
+    WHERE is_template = 0 AND variant IS NULL AND est_volume_min > 0 AND est_volume_max > est_volume_min;
+`;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -129,4 +146,6 @@ export const MIGRATIONS: Record<number, string> = {
   `,
   // 3 -> 4: saved plans can record how the load went.
   3: `ALTER TABLE load_plans ADD COLUMN outcome_json TEXT;`,
+  // 4 -> 5: truck types with a volume range become separate Minimum, Rata-rata and Maksimum entries.
+  4: SPLIT_TRUCK_SIZES,
 };
