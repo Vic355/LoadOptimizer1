@@ -13,6 +13,21 @@ export const t = {
   themeLight: 'Mode terang',
   themeDark: 'Mode gelap',
 
+  // Help assistant
+  askAi: 'Tanya AI',
+  askTitle: 'Tanya AI tentang aplikasi ini',
+  askIntro: 'Tanyakan cara memakai aplikasi ini, arti hasil, atau cara mengubah data. Asisten hanya menjelaskan: tidak bisa melihat atau mengubah data Anda.',
+  askExamples: ['Bagaimana cara menambah SKU baru?', 'Apa beda model Standar dan Bebas?', 'Kenapa ada karton yang tidak muat?'],
+  askPlaceholder: 'Tulis pertanyaan…',
+  askSend: 'Kirim',
+  askThinking: 'Sedang menjawab…',
+  askRemaining: (n: number) => `Sisa ${n} pertanyaan hari ini`,
+  askNote: 'Prototipe AI: jawaban bisa keliru. Kuota harian terbatas.',
+  askGuide: 'Baca panduan lengkap',
+  askLimit: 'Batas pertanyaan hari ini sudah tercapai. Coba lagi besok.',
+  askOffline: 'Asisten hanya tersedia di versi online aplikasi.',
+  askFailed: 'Asisten tidak bisa menjawab saat ini. Coba lagi nanti.',
+
   // Admin lock
   viewMode: 'Pengguna',
   editMode: 'Master',

@@ -303,6 +303,23 @@ td.bad { color: var(--bad); font-weight: 650; }
 .icon-btn { border: 1px solid var(--line); background: var(--surface-2); min-width: 36px; height: 36px; padding: 0 10px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
 .icon-btn:hover { border-color: var(--muted); }
 
+/* Tanya AI side panel */
+.ask-panel { position: fixed; z-index: 30; top: 12px; right: 12px; bottom: 12px; width: min(400px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 8px; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgb(0 0 0 / 0.25); }
+.ask-panel[hidden] { display: none; }
+.ask-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ask-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.ask-examples { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.ask-examples .btn { text-align: left; }
+.ask-msg { padding: 8px 10px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; max-width: 92%; }
+.ask-msg.user { align-self: flex-end; background: var(--accent-soft); }
+.ask-msg.assistant { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); }
+.ask-msg.pending { color: var(--muted); }
+.ask-msg.error { align-self: flex-start; background: var(--bad-soft); color: var(--bad); }
+.ask-form { display: flex; gap: 6px; align-items: flex-end; }
+.ask-form textarea { flex: 1; resize: vertical; min-height: 40px; max-height: 160px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font: inherit; color: inherit; }
+.ask-panel .hint { margin: 0; }
+@media print { .ask-panel { display: none; } }
+
 /* Planner extras */
 .label-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-top: 10px; }
 .label-row label { margin-top: 0; }

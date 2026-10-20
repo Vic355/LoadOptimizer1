@@ -6,6 +6,7 @@ import { Planner } from './ui/planner';
 import { MasterData } from './ui/master';
 import { History } from './ui/history';
 import { admin } from './ui/admin';
+import { assistantButton } from './ui/assistant';
 import { applyTheme, currentTheme, onThemeChange, toggleTheme } from './ui/theme';
 
 type Page = 'planner' | 'history' | 'master';
@@ -76,7 +77,7 @@ async function boot() {
       { class: 'topbar' },
       h('div', { class: 'brand' }, h('span', { class: 'logo', 'aria-hidden': 'true' }, '▣'), h('div', {}, h('h1', {}, t.appTitle), h('p', {}, t.appSubtitle)), h('span', { class: 'tag soon' }, t.prototype), h('span', { class: dbMode() === 'shared' ? 'tag' : 'tag warn' }, dbMode() === 'shared' ? t.dbShared : t.dbLocal)),
       nav,
-      h('div', { class: 'top-actions' }, lockBtn, themeBtn),
+      h('div', { class: 'top-actions' }, assistantButton(() => page), lockBtn, themeBtn),
     ),
     main,
   );
