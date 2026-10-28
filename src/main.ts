@@ -17,7 +17,10 @@ async function boot() {
   app.replaceChildren(h('p', { class: 'boot' }, t.loadingDb));
   await openDatabase();
 
-  const planner = new Planner(() => history.render());
+  const planner = new Planner(
+    () => history.render(),
+    () => (master.openTab('rules'), show('master')),
+  );
   const history = new History((saved) => {
     show('planner');
     planner.loadShipment(saved.shipment_id, saved.truck_seq);

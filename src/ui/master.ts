@@ -54,6 +54,13 @@ export class MasterData {
     this.render();
   }
 
+  /** Opens a tab directly, e.g. the model rules from the planner's summary. */
+  openTab(tab: Tab) {
+    this.tab = tab;
+    this.filter = '';
+    this.flash = '';
+  }
+
   render() {
     const tabs: [Tab, string][] = [
       ['skus', t.masterSkus],

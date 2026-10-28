@@ -104,7 +104,10 @@ export class Planner {
   private destCombo: ReturnType<typeof combobox<Destination>>;
   private shipmentCombo: ReturnType<typeof combobox<ShipmentPick>>;
 
-  constructor(private onSaved: () => void) {
+  constructor(
+    private onSaved: () => void,
+    private onEditRules: () => void,
+  ) {
     // Shipment number: type a new one, or pick a saved shipment (or the example) to reopen it.
     this.shipmentCombo = combobox<ShipmentPick>({
       id: 'shipment-no',
@@ -894,6 +897,7 @@ export class Planner {
           h('div', { class: 'kpi big' }, h('span', { class: 'kpi-label' }, `${t.shipmentNo} ${this.shipmentNo || this.tempNo}`), h('span', { class: 'kpi-value' }, fmt.int(result.totalCartons)), h('span', { class: 'kpi-sub' }, `${t.cartons} · ${t.models[result.model]}`)),
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.trucksUsed), h('span', { class: 'kpi-value' }, fmt.int(result.trucks.length))),
         ),
+        this.fillBlock(result.trucks),
         unplaced.length
           ? h(
               'div',
@@ -907,6 +911,7 @@ export class Planner {
           { class: 'actions' },
           h('button', { class: 'btn primary', type: 'button', onclick: () => this.print() }, t.printShipment(result.trucks.length)),
           h('button', { class: 'btn', type: 'button', onclick: () => void this.save() }, t.savePlan),
+          h('button', { class: 'btn ghost small', type: 'button', title: t.editRulesHint, onclick: () => this.onEditRules() }, `⚙ ${t.editRules}`),
         ),
       );
     }
@@ -919,7 +924,6 @@ export class Planner {
           { class: 'kpis' },
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.totalCartons), h('span', { class: 'kpi-value' }, fmt.int(plan.totalCartons))),
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, plan.segmentTiers ? t.segmentCount : t.tierCount), h('span', { class: 'kpi-value' }, fmt.int(plan.tiers.length))),
-          h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.utilization), h('span', { class: 'kpi-value' }, fmt.pct(plan.volumeUtilization))),
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.usedLength), h('span', { class: 'kpi-value' }, fmt.m(plan.usedLength))),
         ),
       );
@@ -993,6 +997,38 @@ export class Planner {
     if (!this.summaryBox.childElementCount) this.summaryBox.append(h('p', { class: 'muted' }, t.emptyState));
   }
 
+  /**
+   * How full each truck is: carton volume loaded by the model against the truck's inner volume,
+   * plus the whole shipment. Clicking a truck's bar opens that truck.
+   */
+  private fillBlock(plans: PlanResult[]): HTMLElement {
+    let loaded = 0;
+    let space = 0;
+    const rows = plans.map((p, i) => {
+      const tr = this.slotTruck(i);
+      const cap = tr ? tr.length * tr.width * tr.height : 0;
+      loaded += p.loadedVolume;
+      space += cap;
+      const ratio = cap > 0 ? p.loadedVolume / cap : p.volumeUtilization;
+      return h(
+        'button',
+        { type: 'button', class: `fill-row${i === this.truckIdx ? ' on' : ''}`, onclick: () => this.selectTruck(i) },
+        h('span', { class: 'fill-name' }, t.truckN(i + 1), this.slots[i]?.plateNo ? h('span', { class: 'mono muted' }, ` ${this.slots[i].plateNo}`) : null),
+        fillBar(ratio),
+        h('span', { class: 'fill-pct' }, fmt.pct(ratio)),
+        h('span', { class: 'fill-sub' }, t.fillDetail(fmt.d1(p.loadedVolume / 1e6), fmt.d1(cap / 1e6), fmt.d1(Math.max(0, cap - p.loadedVolume) / 1e6))),
+      );
+    });
+    const total = space > 0 ? loaded / space : 0;
+    return h(
+      'div',
+      { class: 'fill-block' },
+      h('div', { class: 'fill-head' }, h('span', { class: 'kpi-label' }, t.fillTitle), plans.length > 1 ? h('span', { class: 'fill-total' }, `${t.fillShipment}: `, h('strong', {}, fmt.pct(total))) : null),
+      ...rows,
+      h('p', { class: 'hint' }, t.fillHint),
+    );
+  }
+
   /** The trucks of the chosen result with the truck and plate number each was planned for. */
   private plannedTrucks() {
     const result = this.selectedResult();
@@ -1000,7 +1036,7 @@ export class Planner {
     return result.trucks.map((plan, i) => ({ plan, truck: this.slotTruck(i)!, plateNo: this.slots[i]?.plateNo || null, seq: i + 1 }));
   }
 
-  /** Saving needs a shipment number (or a draft number) and asks before saving trucks without a plate number. */
+  /** Saving needs a shipment number (or a draft number) and at least one plate number, and asks before saving the other trucks without one. */
   private async save() {
     const result = this.selectedResult();
     if (!result) return;
@@ -1019,6 +1055,11 @@ export class Planner {
       }
     }
     const trucks = this.plannedTrucks();
+    // A shipment needs at least one plate number; a draft may still be saved without one.
+    if (!isTemp && !trucks.some((x) => x.plateNo)) {
+      if (await confirmDialog(t.saveNeedsPlate(no), t.fillPlate, t.cancel, false)) this.el.querySelector<HTMLInputElement>('input[list="plate-list"]')?.focus();
+      return;
+    }
     const missing = trucks.filter((x) => !x.plateNo).map((x) => t.truckN(x.seq));
     if (missing.length && !(await confirmDialog(t.saveNoPlate(missing.join(', ')), t.saveAnyway, t.cancel, false))) return;
     const existing = repo.shipmentByNo(no);
@@ -1423,4 +1464,11 @@ function searchShipments(text: string): ShipmentPick[] {
   const saved = [...byId.values()].filter((p) => !q || [p.no, p.customer, p.city, p.plates].some((x) => x?.toLowerCase().includes(q)));
   const example: ShipmentPick[] = !q || t.exampleShipment.toLowerCase().includes(q) || t.exampleNo.toLowerCase().includes(q) ? [{ kind: 'example' }] : [];
   return [...saved.slice(0, 8), ...example];
+}
+
+/** Horizontal fill bar; colour shows how much room is left. */
+function fillBar(ratio: number): HTMLElement {
+  const pct = Math.max(0, Math.min(1, ratio)) * 100;
+  const level = ratio >= 0.85 ? 'full' : ratio >= 0.6 ? 'mid' : 'low';
+  return h('span', { class: `fill-bar ${level}`, role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pct) }, h('i', { style: `width:${pct.toFixed(1)}%` }));
 }
