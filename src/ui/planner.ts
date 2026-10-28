@@ -83,6 +83,9 @@ export class Planner {
 
   // Mount points that re-render independently.
   private shipmentHint = h('div', { class: 'shipment-hint' });
+  /** Everything under "Input Pengiriman"; locked until a shipment number is entered. */
+  private inputFields = h('fieldset', { class: 'input-fields' });
+  private lockNote = h('p', { class: 'lock-note' }, `🔒 ${t.inputLocked}`);
   private noteInput = h('input', { type: 'text', id: 'note', placeholder: t.notePlaceholder });
   private destCard = h('div', { class: 'dest-card' });
   private linesBox = h('div', { class: 'lines' });
@@ -187,6 +190,7 @@ export class Planner {
     this.shipmentCombo.input.addEventListener('input', () => {
       this.shipmentNo = this.shipmentCombo.input.value.trim();
       this.renderShipmentHint();
+      this.renderLock();
       this.renderHelper();
     });
     this.noteInput.addEventListener('input', () => (this.note = this.noteInput.value.trim()));
@@ -214,10 +218,7 @@ export class Planner {
       h('p', { class: 'hint' }, t.aiInputHint),
     );
 
-    return h(
-      'section',
-      { class: 'input panel' },
-      h('h2', {}, t.inputTitle),
+    this.inputFields.append(
       h('label', { for: 'dest-search' }, t.destination),
       this.destCombo.el,
       this.destCard,
@@ -245,6 +246,41 @@ export class Planner {
       this.message,
       ai,
     );
+    return h('section', { class: 'input panel' }, h('h2', {}, t.inputTitle), this.lockNote, this.inputFields);
+  }
+
+  /** The shipment number comes first: the input panel opens once there is one (or a reopened draft's number). */
+  private renderLock() {
+    const locked = !this.shipmentNo && !this.tempNo;
+    this.inputFields.disabled = locked;
+    this.lockNote.hidden = !locked;
+  }
+
+  /** Empties the planner for a new shipment. Saved plans in Riwayat Rencana stay as they are. */
+  private async reset() {
+    const dirty = this.shipmentNo || this.tempNo || this.lines.length || this.destination || Object.keys(this.results).length;
+    if (dirty && !(await confirmDialog(t.resetConfirm, t.resetPlan, t.cancel))) return;
+    this.cancel();
+    this.shipmentNo = '';
+    this.tempNo = '';
+    this.shipmentId = null;
+    this.shipmentCombo.setText('');
+    this.note = '';
+    this.noteInput.value = '';
+    this.destination = null;
+    this.destCombo.setText('');
+    this.lines = [];
+    this.slots = [this.newSlot(null)];
+    this.results = {};
+    this.progress = {};
+    this.stale = false;
+    this.truckIdx = 0;
+    this.upToTier = 0;
+    this.picked = null;
+    this.say('');
+    this.renderAll();
+    this.update3d(true);
+    this.view?.frameCamera();
   }
 
   private renderShipmentHint() {
@@ -666,7 +702,14 @@ export class Planner {
     return h(
       'section',
       { class: 'stage panel' },
-      h('div', { class: 'shipment-bar' }, h('label', { for: 'shipment-no' }, t.shipmentNo), this.shipmentCombo.el, this.shipmentHint),
+      h(
+        'div',
+        { class: 'shipment-bar' },
+        h('label', { for: 'shipment-no' }, t.shipmentNo),
+        this.shipmentCombo.el,
+        h('button', { class: 'btn ghost small reset-btn', type: 'button', title: t.resetHint, onclick: () => this.reset() }, `↺ ${t.resetPlan}`),
+        this.shipmentHint,
+      ),
       this.stageHead,
       h('div', { class: 'canvas-wrap' }, this.canvasHost, this.helper, this.pickedBox),
       this.stageTools,
@@ -1184,6 +1227,7 @@ export class Planner {
 
   private renderAll() {
     this.renderShipmentHint();
+    this.renderLock();
     this.renderDestCard();
     this.renderTrucks();
     this.renderLines();
