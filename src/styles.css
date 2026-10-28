@@ -468,3 +468,61 @@ input[type='date'] { padding: 7px 10px; border: 1px solid var(--line); border-ra
 
 .outcome { border: 1px solid var(--line, #d9dee3); border-radius: 8px; padding: 12px; margin: 0; display: grid; gap: 10px; }
 .outcome legend { font-weight: 600; padding: 0 6px; }
+
+/* Shipment input: helper for an empty shipment number, truck cards */
+.mini-helper { margin-top: 6px; padding: 7px 10px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 0.8rem; display: flex; flex-direction: column; gap: 2px; }
+.mini-helper span { color: var(--ink); opacity: 0.8; }
+.truck-slots { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.truck-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; background: var(--surface-2); display: flex; flex-direction: column; gap: 2px; }
+.truck-card.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.truck-card.unused { opacity: 0.6; }
+.truck-card label { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.truck-card input, .truck-card select { background: var(--surface); }
+.tc-head { display: flex; align-items: center; gap: 6px; }
+.tc-head .tag { margin-left: 0; }
+.dims-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 8px; font-weight: 600; font-size: 0.85rem; }
+.truck-card .dims-grid label { margin-top: 0; font-weight: 500; }
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent); font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+.add-truck { align-self: flex-start; }
+
+/* Stage head: model selector and one tab per truck, so the 3D view keeps the space */
+.shipment-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.shipment-bar label { margin: 0; font-weight: 700; font-size: 0.95rem; }
+.shipment-bar .combo input { font-size: 1.05rem; font-weight: 600; }
+.shipment-bar .shipment-hint { grid-column: 2 / -1; }
+.shipment-bar .shipment-hint:empty { display: none; }
+.shipment-bar .mini-helper { margin-top: 0; flex-direction: row; flex-wrap: wrap; gap: 2px 8px; }
+@media (max-width: 640px) { .shipment-bar { grid-template-columns: minmax(0, 1fr) auto; } .shipment-bar label { grid-column: 1 / -1; } .shipment-bar .shipment-hint { grid-column: 1 / -1; } }
+.input-fields { border: 0; margin: 0; padding: 0; min-width: 0; display: contents; }
+.input-fields:disabled { display: block; opacity: 0.45; pointer-events: none; }
+.lock-note { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 0.85rem; font-weight: 600; }
+.lock-note[hidden] { display: none; }
+.stage-head { display: flex; flex-direction: column; gap: 8px; }
+.model-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.model-pick label { font-weight: 650; font-size: 0.85rem; }
+.model-pick select { width: auto; min-width: 260px; max-width: 100%; font-weight: 600; }
+.model-pick .hint { margin: 0; flex: 1 1 200px; }
+.stage-head .stale-note { margin: 0; }
+.truck-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.truck-tabs button { flex: none; display: inline-flex; gap: 6px; align-items: baseline; border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 0.82rem; }
+.truck-tabs button.on { border-color: var(--accent); background: var(--accent-soft); }
+.tab-warn { color: var(--bad); }
+.stage-helper { position: absolute; top: 10px; left: 10px; max-width: min(250px, calc(100% - 20px)); opacity: 0.94; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); font-size: 0.84rem; }
+.stage-helper[hidden] { display: none; }
+.stage-helper ol { margin: 4px 0 0; padding-left: 18px; font-size: 0.8rem; }
+.stage-helper li.done { color: var(--good); }
+.stage-helper p { margin: 0; color: var(--muted); font-size: 0.78rem; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+.summary-sub { font-size: 0.92rem; margin: 14px 0 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.shipment-kpis { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.shipment-kpis .kpi.big { grid-column: auto; }
+label.stack { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 0.85rem; margin: 10px 0; }
+
+/* Loader sheet: carton positions */
+.p-shipment { font-size: 11pt; font-weight: 700; margin-top: 1mm; }
+.p-poses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 1.5mm 5mm; font-size: 9pt; border-top: 1px solid #111; padding-top: 2mm; }
+.p-poses > strong, .p-pose-hint { grid-column: 1 / -1; }
+.p-pose-item { display: inline-flex; align-items: center; gap: 1.5mm; }
+.p-pose-item b { font-size: 11pt; }
+.p-pose { flex: none; }
+.p-pose-hint { color: #333; }

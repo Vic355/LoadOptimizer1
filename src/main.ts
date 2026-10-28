@@ -20,7 +20,7 @@ async function boot() {
   const planner = new Planner(() => history.render());
   const history = new History((saved) => {
     show('planner');
-    planner.loadSaved(saved);
+    planner.loadShipment(saved.shipment_id, saved.truck_seq);
   });
   const master = new MasterData(() => planner.reloadTrucks());
   let page: Page = 'planner';
@@ -81,9 +81,8 @@ async function boot() {
     ),
     main,
   );
+  // The planner starts empty: its helper says what to fill in first.
   show(page);
-  // First visit: show a worked example so the 3D view is not empty.
-  planner.loadExample();
 }
 
 boot().catch((err) => {

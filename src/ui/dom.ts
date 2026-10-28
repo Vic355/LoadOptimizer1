@@ -48,7 +48,7 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: numb
 }
 
 /** In-page confirmation (native confirm() is blocked in some embedded viewers). */
-export function confirmDialog(message: string, okLabel: string, cancelLabel: string): Promise<boolean> {
+export function confirmDialog(message: string, okLabel: string, cancelLabel: string, danger = true): Promise<boolean> {
   return new Promise((resolve) => {
     const dialog = h('dialog', { class: 'form-dialog confirm' });
     const done = (v: boolean) => {
@@ -58,7 +58,7 @@ export function confirmDialog(message: string, okLabel: string, cancelLabel: str
     };
     dialog.append(
       h('p', {}, message),
-      h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => done(false) }, cancelLabel), h('button', { class: 'btn primary danger-fill', type: 'button', onclick: () => done(true) }, okLabel)),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => done(false) }, cancelLabel), h('button', { class: danger ? 'btn primary danger-fill' : 'btn primary', type: 'button', onclick: () => done(true) }, okLabel)),
     );
     dialog.addEventListener('cancel', () => done(false));
     document.body.append(dialog);

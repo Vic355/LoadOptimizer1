@@ -33,24 +33,26 @@ day per database, so production and PR previews together stay inside the free 10
 
 | Path | What it is |
 | --- | --- |
-| `src/db/schema.ts` | SQLite schema (trucks, destinations, allowed trucks per destination, SKUs, shipments, saved plans) |
-| `src/db/seed.ts`, `seed-destinations.ts` | Seed data: truck types, 161 destinations from logistics, 12 dummy SKUs |
+| `src/db/schema.ts` | SQLite schema (truck types, police-number register, destinations, allowed trucks per destination, SKUs, shipments, one saved plan per truck) |
+| `src/db/seed.ts`, `seed-destinations.ts`, `seed-skus.ts` | Seed data: truck types, 161 destinations from logistics, 281 SAP SKUs |
+| `src/db/material.ts` | Reads carton size (mm) and board grade (K/M) from the SAP material description and flags malformed rows |
 | `src/db/database.ts` | sql.js (SQLite in WebAssembly): a copy of the shared D1 data, or a local database in IndexedDB without a server; export/import `.sqlite` |
 | `src/db/repo.ts` | All queries; changes go through `writes.ts` |
 | `src/db/writes.ts`, `snapshot.ts` | Every change as a named operation, run by the Worker on D1 (or locally); table rows as JSON |
 | `src/server/index.ts` | Cloudflare Worker: static files plus `/api` on D1 |
 | `src/server/assistant.ts`, `public/app-guide.md` | Help assistant (`/api/ask`) and the guide it answers from |
-| `src/engine/` | Packing engine, runs in a Web Worker: `standard.ts` (one SKU per tier), `models.ts` (free and mixed, block building + randomised search), `blocks.ts` (guillotine block builder) |
-| `src/ui/` | Planner screen (input, model cards, 3D view, summary, details), master data CRUD, print sheet |
+| `src/engine/` | Packing engine, runs in a Web Worker: `standard.ts` (one SKU per tier), `models.ts` (free and mixed, block building + randomised search), `blocks.ts` (guillotine block builder), `shipment.ts` (a shipment over several trucks), `pose.ts` (carton position A–F for the loader sheet) |
+| `src/ui/` | Planner screen (shipment input, truck cards, model selector, 3D view, summary, details), master data CRUD, print sheet |
 | `src/i18n/id.ts` | Every user-facing string |
-| `data/destinations.tsv` | Raw destination list as supplied |
+| `data/destinations.tsv`, `data/skus.tsv` | Raw destination and SAP SKU lists as supplied |
 
 ## Known data gaps
 
 - Truck inner dimensions are estimates derived from the cubic-volume ranges (except ISO 20'/40' containers). Replace with tape-measured values in Data Master.
 - "Split MT" has no volume or dimensions yet.
 - "Tronton Built Up-70" is kept separate from "Big Semitrailer Zone 1" (both 70 m³) until confirmed they are the same vehicle.
-- SKUs are dummies (`DUM-xxx`).
+- SKU weights are not in the SAP data; safe stack height defaults to a 250 cm roof and product groups are guessed from the name.
+- 10 SKUs have a non-standard material description (gsm-only, reversed, cut-off grades, decimal sizes); they are kept and flagged "format tidak baku".
 
 ## Units and axes
 

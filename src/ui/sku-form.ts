@@ -8,6 +8,7 @@ type Kind = 'text' | 'number' | 'bool' | 'select';
 const FIELDS: { key: keyof SkuInput; label: string; type: Kind; required?: boolean }[] = [
   { key: 'code', label: t.code, type: 'text', required: true },
   { key: 'name', label: t.name, type: 'text', required: true },
+  { key: 'cbox_code', label: t.cbox, type: 'text' },
   { key: 'length_cm', label: t.lengthCm, type: 'number', required: true },
   { key: 'width_cm', label: t.widthCm, type: 'number', required: true },
   { key: 'height_cm', label: t.heightCm, type: 'number', required: true },
@@ -18,6 +19,8 @@ const FIELDS: { key: keyof SkuInput; label: string; type: Kind; required?: boole
   { key: 'safe_stack_layers', label: t.safeLayers, type: 'number', required: true },
   { key: 'max_top_load_kg', label: t.topLoad, type: 'number' },
   { key: 'product_group', label: t.productGroup, type: 'text' },
+  { key: 'board_grade', label: t.boardGrade, type: 'text' },
+  { key: 'material_desc', label: t.materialDesc, type: 'text' },
   { key: 'packaging', label: t.packaging, type: 'select' },
   { key: 'can_lie_down', label: t.canLieDown, type: 'bool' },
   { key: 'active', label: t.active, type: 'bool' },

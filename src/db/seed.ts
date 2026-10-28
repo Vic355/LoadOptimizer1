@@ -1,7 +1,7 @@
 import type { Database } from 'sql.js';
 import { DEFAULT_RULES } from '../engine/rules';
-import { SPLIT_TRUCK_SIZES } from './schema';
-import { DESTINATION_ROWS, DUMMY_SKUS, TRUCKS, vehicleCodes } from './seed-data';
+import { SPLIT_TRUCK_SIZES, sapSkuInsert } from './schema';
+import { DESTINATION_ROWS, TRUCKS, vehicleCodes } from './seed-data';
 
 export function seedDatabase(db: Database): void {
   db.exec('BEGIN');
@@ -28,12 +28,8 @@ export function seedDatabase(db: Database): void {
   insertDest.free();
   insertLink.free();
 
-  const insertSku = db.prepare(
-    `INSERT INTO skus (code, name, length_cm, width_cm, height_cm, mod_length_cm, mod_width_cm, mod_height_cm, weight_kg, safe_stack_layers, can_lie_down, packaging, product_group, is_dummy)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-  );
-  for (const s of DUMMY_SKUS) insertSku.run([s.code, s.name, ...s.dims, ...s.mod, s.kg, s.safeLayers, s.lie ? 1 : 0, s.packaging, s.group]);
-  insertSku.free();
+  // SKUs from the SAP list (data/skus.tsv).
+  db.exec(sapSkuInsert());
 
   const insertRules = db.prepare('INSERT INTO model_settings (model, rules_json) VALUES (?, ?)');
   for (const [model, rules] of Object.entries(DEFAULT_RULES)) insertRules.run([model, JSON.stringify(rules)]);

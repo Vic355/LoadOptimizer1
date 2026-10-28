@@ -111,4 +111,29 @@ export interface SearchProgress {
   bestCartons: number;
   /** 0..1 share of the time budget used. */
   fraction: number;
+  /** 0-based truck of the shipment being planned. */
+  truck?: number;
+}
+
+/** A shipment (sales order) planned over as many trucks as its fixed quantities need. */
+export interface ShipmentRequest {
+  /** Trucks in loading order; when more are needed the last one is repeated. */
+  trucks: EngineTruck[];
+  lines: EngineLine[];
+  rules: ModelRules;
+  /** Most trucks to plan before the rest is reported as unplaced. */
+  maxTrucks?: number;
+  timeBudgetMs?: number;
+  seed?: number;
+}
+
+export interface ShipmentResult {
+  model: ModelId;
+  /** One plan per truck, in order. */
+  trucks: PlanResult[];
+  /** Fixed quantities left after the last truck (none fit, or the truck limit was reached). */
+  unplaced: Record<number, number>;
+  totalCartons: number;
+  plansEvaluated: number;
+  elapsedMs: number;
 }

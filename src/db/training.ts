@@ -5,7 +5,7 @@ import type { SavedPlan } from './repo';
 // learn to predict). Exported as CSV so it can be trained on outside the app.
 
 const COLUMNS = [
-  'plan_id', 'created', 'loaded_on', 'status', 'model',
+  'plan_id', 'shipment_no', 'truck_seq', 'plate_no', 'created', 'loaded_on', 'status', 'model',
   'truck', 'truck_length_cm', 'truck_width_cm', 'truck_height_cm',
   'sku_count', 'cartons', 'weight_kg', 'volume_utilization', 'used_length_cm',
   'tiers', 'tier_height_max_cm', 'tier_height_mean_cm', 'tier_step_max_cm', 'interlocked_share',
@@ -39,7 +39,7 @@ function row(p: SavedPlan): Array<string | number | null> {
   const stability = result?.stability;
 
   return [
-    p.id, p.created_at, outcome.loadedOn ?? '', p.status, p.model,
+    p.id, p.shipment_no, p.truck_seq, p.plate_no, p.created_at, outcome.loadedOn ?? '', p.status, p.model,
     truck.name, truck.length, truck.width, truck.height,
     result ? Object.keys(result.loaded).length : null, p.total_cartons, result ? round(result.totalWeight) : null, round(p.volume_utilization, 3), result ? round(result.usedLength, 1) : null,
     p.tier_count, heights.length ? Math.max(...heights) : null, heights.length ? round(heights.reduce((a, b) => a + b, 0) / heights.length, 1) : null, steps.length ? Math.max(...steps) : 0,

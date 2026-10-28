@@ -50,32 +50,3 @@ export function vehicleCodes(raw: string): string[] {
     .map((part) => VEHICLE_ALIASES[part.trim().toLowerCase()])
     .filter((c): c is string => !!c);
 }
-
-export type Packaging = 'carton' | 'bundle';
-
-// Dummy tissue SKUs until the real master data is loaded. Sizes are plausible, not real.
-// Size modifiers: + for packs that bulge, - for packs that shrink.
-export const DUMMY_SKUS: {
-  code: string;
-  name: string;
-  dims: [number, number, number];
-  mod: [number, number, number];
-  kg: number;
-  safeLayers: number;
-  lie: boolean;
-  packaging: Packaging;
-  group: string;
-}[] = [
-  { code: 'DUM-001', name: 'Facial Tissue 250s isi 48', dims: [60, 40, 35], mod: [0, 0, 0], kg: 6.5, safeLayers: 6, lie: false, packaging: 'carton', group: 'Facial' },
-  { code: 'DUM-002', name: 'Facial Tissue 180s isi 40', dims: [55, 38, 30], mod: [0, 0, 0], kg: 5.0, safeLayers: 7, lie: false, packaging: 'carton', group: 'Facial' },
-  { code: 'DUM-003', name: 'Toilet Roll 10 roll isi 8 (bal)', dims: [50, 45, 40], mod: [1, 1, 2], kg: 4.8, safeLayers: 6, lie: true, packaging: 'bundle', group: 'Toilet' },
-  { code: 'DUM-004', name: 'Kitchen Towel 2 roll isi 12', dims: [45, 30, 28], mod: [0, 0, 0], kg: 4.2, safeLayers: 7, lie: true, packaging: 'carton', group: 'Towel' },
-  { code: 'DUM-005', name: 'Napkin 1/4 lipat 100s isi 60', dims: [52, 36, 26], mod: [0, 0, 0], kg: 7.8, safeLayers: 6, lie: false, packaging: 'carton', group: 'Napkin' },
-  { code: 'DUM-006', name: 'Pocket Tissue 10s isi 120', dims: [40, 30, 25], mod: [0, 0, 0], kg: 3.6, safeLayers: 8, lie: true, packaging: 'carton', group: 'Facial' },
-  { code: 'DUM-007', name: 'Jumbo Roll Tissue isi 12', dims: [58, 39, 30], mod: [0, 0, 0], kg: 9.0, safeLayers: 5, lie: false, packaging: 'carton', group: 'Away From Home' },
-  { code: 'DUM-008', name: 'Hand Towel M-fold isi 20', dims: [42, 34, 28], mod: [0, 0, 0], kg: 8.0, safeLayers: 6, lie: false, packaging: 'carton', group: 'Away From Home' },
-  { code: 'DUM-009', name: 'Toilet Roll 4 roll isi 12 (bal)', dims: [62, 42, 48], mod: [0, 0, -1], kg: 5.5, safeLayers: 5, lie: true, packaging: 'bundle', group: 'Toilet' },
-  { code: 'DUM-010', name: 'Facial Tissue Travel 50s isi 96', dims: [48, 32, 30], mod: [0, 0, 0], kg: 4.4, safeLayers: 7, lie: false, packaging: 'carton', group: 'Facial' },
-  { code: 'DUM-011', name: 'Wet Tissue 50s isi 24', dims: [44, 32, 27], mod: [0, 0, 0], kg: 9.5, safeLayers: 5, lie: false, packaging: 'carton', group: 'Wet Tissue' },
-  { code: 'DUM-012', name: 'Interfold Towel 150s isi 30', dims: [48, 40, 30], mod: [0, 0, 0], kg: 8.6, safeLayers: 6, lie: false, packaging: 'carton', group: 'Away From Home' },
-];

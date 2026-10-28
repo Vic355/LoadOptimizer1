@@ -7,6 +7,7 @@ import { confirmDialog, fmt, h } from './dom';
 import { openSkuForm } from './sku-form';
 import * as personal from '../db/personal';
 import { discardAllPersonal, discardPersonal } from '../db/personal';
+import { parseMaterialDescription, skuFromSap } from '../db/material';
 
 type FieldType = 'text' | 'number' | 'bool' | 'select';
 interface Field {
@@ -38,7 +39,7 @@ interface EntitySpec<T extends { id: number }> {
   rowActions?: (row: T) => Node[];
 }
 
-type Tab = 'skus' | 'trucks' | 'destinations' | 'rules' | 'database';
+type Tab = 'skus' | 'trucks' | 'vehicles' | 'destinations' | 'rules' | 'database';
 
 const signed = (n: number) => (n > 0 ? `+${fmt.d1(n)}` : n < 0 ? `−${fmt.d1(-n)}` : '0');
 
@@ -57,6 +58,7 @@ export class MasterData {
     const tabs: [Tab, string][] = [
       ['skus', t.masterSkus],
       ['trucks', t.masterTrucks],
+      ['vehicles', t.masterVehicles],
       ['destinations', t.masterDestinations],
       ['rules', t.masterRules],
       ['database', t.masterDatabase],
@@ -71,6 +73,7 @@ export class MasterData {
     let body: HTMLElement;
     if (this.tab === 'skus') body = this.entity(this.skuSpec());
     else if (this.tab === 'trucks') body = this.entity(this.truckSpec());
+    else if (this.tab === 'vehicles') body = this.entity(this.vehicleSpec());
     else if (this.tab === 'destinations') body = this.entity(this.destinationSpec());
     else if (this.tab === 'rules') body = this.rules();
     else body = this.database();
@@ -242,8 +245,16 @@ export class MasterData {
             ),
         },
         { label: t.name, value: (r) => r.name },
+        { label: t.cbox, value: (r) => h('span', { class: 'mono' }, r.cbox_code ?? '–') },
         { label: t.packaging, value: (r) => t.packagings[r.packaging] ?? r.packaging },
         { label: t.dims, value: (r) => fmt.dims(r.length_cm, r.width_cm, r.height_cm) },
+        {
+          label: t.boardGrade,
+          value: (r) => {
+            const issues = r.material_desc ? parseMaterialDescription(r.material_desc)?.issues.filter((i) => i !== 'white-kraft') ?? [] : [];
+            return h('span', { title: r.material_desc ?? '' }, r.board_grade ?? '–', issues.length ? h('span', { class: 'tag warn' }, t.materialIssue) : null);
+          },
+        },
         { label: t.modColumn, value: (r) => (r.mod_length_cm || r.mod_width_cm || r.mod_height_cm ? `${signed(r.mod_length_cm)} / ${signed(r.mod_width_cm)} / ${signed(r.mod_height_cm)}` : '–') },
         { label: t.volume, value: (r) => fmt.d3(r.volume_m3), num: true },
         { label: t.weightKg, value: (r) => (r.weight_kg != null ? fmt.d1(r.weight_kg) : '–'), num: true },
@@ -265,7 +276,7 @@ export class MasterData {
             ? h('button', { class: 'btn ghost small danger', type: 'button', onclick: async () => (await confirmDialog(t.confirmDelete, t.delete, t.cancel)) && (await repo.deleteSku(r.id), done()) }, t.delete)
             : null,
       ].filter((x): x is HTMLButtonElement => !!x),
-      searchText: (r) => `${r.code} ${r.name} ${r.product_group ?? ''}`,
+      searchText: (r) => `${r.code} ${r.name} ${r.product_group ?? ''} ${r.cbox_code ?? ''}`,
       toolbar: () => [
         h('button', { class: 'btn', type: 'button', onclick: () => this.importSkus() }, t.importSkus),
         hasPersonal
@@ -291,8 +302,31 @@ export class MasterData {
     const run = async () => {
       const rows: repo.SkuInput[] = [];
       let skipped = 0;
+      let flagged = 0;
       const lines = area.value.split(/\r?\n/).filter((x) => x.trim());
       for (const [i, raw] of lines.entries()) {
+        // SAP export: SKU, Desc, Cbox, Material Description (the size is inside the description, in mm).
+        const sap = raw.includes('\t') ? raw.split('\t').map((x) => x.trim()) : [];
+        if (sap.length === 4 && parseMaterialDescription(sap[3])) {
+          const { issues, ...fields } = skuFromSap(sap[0], sap[1], sap[2], sap[3])!;
+          const existing = repo.listMasterSkus().find((s) => s.code === fields.code) ?? null;
+          if (issues.some((x) => x !== 'white-kraft')) flagged++;
+          rows.push({
+            ...fields,
+            // Fields SAP does not have keep the values already in the database.
+            weight_kg: existing?.weight_kg ?? null,
+            safe_stack_layers: existing?.safe_stack_layers ?? fields.safe_stack_layers,
+            max_top_load_kg: existing?.max_top_load_kg ?? null,
+            can_lie_down: existing?.can_lie_down ?? 0,
+            packaging: existing?.packaging ?? 'carton',
+            product_group: existing?.product_group ?? fields.product_group,
+            mod_length_cm: existing?.mod_length_cm ?? 0,
+            mod_width_cm: existing?.mod_width_cm ?? 0,
+            mod_height_cm: existing?.mod_height_cm ?? 0,
+            active: existing?.active ?? 1,
+          });
+          continue;
+        }
         const c = raw.split(raw.includes('\t') ? '\t' : ';').map((x) => x.trim());
         const [code, name, l, w, hh, kg, safe, group, pack, lie, ml, mw, mh] = c;
         const dims = [num(l), num(w), num(hh)];
@@ -338,7 +372,7 @@ export class MasterData {
           if (mine) updated++;
           else added++;
         }
-      this.flash = t.importResult(added, updated, skipped);
+      this.flash = `${t.importResult(added, updated, skipped)}${flagged ? ` ${t.importFlagged(flagged)}` : ''}`;
       dialog.close();
       this.onChange();
       this.render();
@@ -392,6 +426,41 @@ export class MasterData {
       save: (v) => repo.saveTruck(v as unknown as repo.TruckType),
       remove: (r) => repo.deleteTruck(r.id),
       searchText: (r) => `${r.code} ${r.name} ${r.variant ?? ''}`,
+    };
+  }
+
+  // ---------- Vehicles (plate numbers) ----------
+
+  private vehicleSpec(): EntitySpec<repo.Vehicle> {
+    const types = repo.listTrucks();
+    const typeName = new Map(types.map((x) => [x.id, repo.truckLabel(x)]));
+    const used = new Map<string, number>();
+    for (const r of query<{ plate_no: string; n: number }>('SELECT plate_no, COUNT(*) AS n FROM load_plans WHERE plate_no IS NOT NULL GROUP BY plate_no')) used.set(r.plate_no, r.n);
+    return {
+      title: t.masterVehicles,
+      note: t.vehiclesNote,
+      fields: [
+        { key: 'plate_no', label: t.plateNo, type: 'text', required: true },
+        { key: 'truck_type_id', label: t.truckType, type: 'select', options: [['', '–'], ...types.map((x) => [String(x.id), repo.truckLabel(x)] as [string, string])] },
+        { key: 'inner_length_cm', label: t.lengthCm, type: 'number' },
+        { key: 'inner_width_cm', label: t.widthCm, type: 'number' },
+        { key: 'inner_height_cm', label: t.heightCm, type: 'number' },
+        { key: 'notes', label: t.notes, type: 'text' },
+      ],
+      columns: [
+        { label: t.plateNo, value: (r) => h('strong', { class: 'mono' }, r.plate_no) },
+        { label: t.truckType, value: (r) => (r.truck_type_id != null ? typeName.get(r.truck_type_id) ?? '–' : '–') },
+        { label: t.lengthCm, value: (r) => (r.inner_length_cm ? fmt.d1(r.inner_length_cm) : '–'), num: true },
+        { label: t.widthCm, value: (r) => (r.inner_width_cm ? fmt.d1(r.inner_width_cm) : '–'), num: true },
+        { label: t.heightCm, value: (r) => (r.inner_height_cm ? fmt.d1(r.inner_height_cm) : '–'), num: true },
+        { label: t.plansCount, value: (r) => fmt.int(used.get(r.plate_no) ?? 0), num: true },
+        { label: t.updated, value: (r) => (r.updated_at ?? r.created_at).slice(0, 16) },
+        { label: t.notes, value: (r) => r.notes ?? '' },
+      ],
+      list: repo.listVehicles,
+      save: (v) => repo.saveVehicle({ ...v, truck_type_id: v.truck_type_id ? Number(v.truck_type_id) : null } as Partial<repo.Vehicle>),
+      remove: (r) => repo.deleteVehicle(r.id),
+      searchText: (r) => `${r.plate_no} ${r.truck_type_id != null ? typeName.get(r.truck_type_id) ?? '' : ''} ${r.notes ?? ''}`,
     };
   }
 
@@ -585,7 +654,8 @@ export class MasterData {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
     const counts = query<{ n: string; c: number }>(
-      `SELECT 'SKU' AS n, count(*) AS c FROM skus UNION ALL SELECT 'Truk', count(*) FROM truck_types
+      `SELECT 'SKU' AS n, count(*) AS c FROM skus UNION ALL SELECT 'Tipe truk', count(*) FROM truck_types UNION ALL SELECT 'Nomor polisi', count(*) FROM trucks
+       UNION ALL SELECT 'Shipment', count(*) FROM shipments
        UNION ALL SELECT 'Tujuan', count(*) FROM destinations UNION ALL SELECT 'Rencana', count(*) FROM load_plans`,
     );
     const company = h('input', { type: 'text', id: 'company-name', value: repo.getMeta('company_name') ?? '', placeholder: t.companyPlaceholder, disabled: !edit });

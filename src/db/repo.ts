@@ -1,4 +1,5 @@
 import { query, write } from './database';
+import { normalizePlate, type ShipmentInput } from './writes';
 import { discardPersonal, personal, personalRules, savePersonal } from './personal';
 import { MODEL_ORDER, withDefaults, type EngineSku, type EngineTruck, type ModelId, type ModelRules, type PlanResult } from '../engine';
 
@@ -64,13 +65,36 @@ export interface Sku {
   active: number;
   volume_m3: number;
   is_dummy: number;
+  /** SAP carton number, board grade and material description (SKUs loaded from SAP data). */
+  cbox_code?: string | null;
+  board_grade?: string | null;
+  material_desc?: string | null;
   /** Set on SKUs from the user's personal layer: a new SKU or a changed database SKU. */
   personal?: 'new' | 'edited';
+}
+
+/** A real truck in the vehicle register, by plate number (nomor polisi). */
+export interface Vehicle {
+  id: number;
+  plate_no: string;
+  truck_type_id: number | null;
+  inner_length_cm: number | null;
+  inner_width_cm: number | null;
+  inner_height_cm: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
 export interface SavedPlan {
   id: number;
   shipment_id: number;
+  shipment_no: string | null;
+  is_temp: number;
+  truck_seq: number;
+  /** Trucks in the shipment. */
+  truck_count: number;
+  plate_no: string | null;
   reference: string | null;
   destination_id: number | null;
   customer: string | null;
@@ -141,6 +165,18 @@ export const maxTruckFor = (destinationId: number): TruckType | null => listedTr
 export const saveDestination = (d: Omit<Destination, 'id'> & { id?: number }, truckIds: number[]) => write('saveDestination', d, truckIds);
 
 export const deleteDestination = (id: number) => write('deleteDestination', id);
+
+// ---- Vehicles (plate numbers) ----
+
+export { normalizePlate } from './writes';
+
+export const listVehicles = () => query<Vehicle>('SELECT * FROM trucks ORDER BY plate_no');
+
+export const vehicleByPlate = (plate: string) => query<Vehicle>('SELECT * FROM trucks WHERE plate_no = ?', [normalizePlate(plate)])[0] ?? null;
+
+export const saveVehicle = (v: Partial<Vehicle>) => write('saveVehicle', v);
+
+export const deleteVehicle = (id: number) => write('deleteVehicle', id);
 
 // ---- SKUs ----
 
@@ -254,24 +290,41 @@ export interface PlanTruck {
   height: number;
 }
 
-export const saveShipmentPlan = (
-  reference: string | null,
-  destinationId: number | null,
-  truckId: number | null,
-  truck: PlanTruck,
-  lines: { sku: Sku; qty: number | null }[],
-  plan: PlanResult,
-) => write('saveShipmentPlan', reference, destinationId, truckId, truck, lines as never, plan as never);
+/** One truck of a shipment to save: the truck used, its plate number and the plan for it. */
+export interface ShipmentTruck {
+  truckTypeId: number | null;
+  plateNo: string | null;
+  truck: PlanTruck;
+  plan: PlanResult;
+}
+
+export const saveShipment = (s: Omit<ShipmentInput, 'lines' | 'trucks'> & { lines: { sku: Sku; qty: number | null }[]; trucks: ShipmentTruck[] }) =>
+  write('saveShipment', s as unknown as ShipmentInput);
+
+export interface ShipmentRow {
+  id: number;
+  shipment_no: string | null;
+  is_temp: number;
+  destination_id: number | null;
+  reference: string | null;
+}
+
+export const shipmentByNo = (no: string) => query<ShipmentRow>('SELECT id, shipment_no, is_temp, destination_id, reference FROM shipments WHERE shipment_no = ?', [no.trim()])[0] ?? null;
 
 export const listSavedPlans = () =>
   query<SavedPlan>(
-    `SELECT p.id, p.shipment_id, s.reference, s.destination_id, d.customer, d.city, d.zone, s.truck_type_id, t.name AS truck_name, s.truck_json,
+    `SELECT p.id, p.shipment_id, s.shipment_no, s.is_temp, p.truck_seq, (SELECT COUNT(*) FROM load_plans o WHERE o.shipment_id = p.shipment_id) AS truck_count, p.plate_no,
+            s.reference, s.destination_id, d.customer, d.city, d.zone, COALESCE(p.truck_type_id, s.truck_type_id) AS truck_type_id, t.name AS truck_name,
+            COALESCE(p.truck_json, s.truck_json) AS truck_json,
             p.model, p.total_cartons, p.tier_count, p.volume_utilization, p.status, p.planner_note, p.actual_json, p.outcome_json, p.created_at
      FROM load_plans p JOIN shipments s ON s.id = p.shipment_id
      LEFT JOIN destinations d ON d.id = s.destination_id
-     LEFT JOIN truck_types t ON t.id = s.truck_type_id
-     ORDER BY p.id DESC`,
+     LEFT JOIN truck_types t ON t.id = COALESCE(p.truck_type_id, s.truck_type_id)
+     ORDER BY p.shipment_id DESC, p.truck_seq`,
   );
+
+/** The saved plans of one shipment, truck 1 first. */
+export const shipmentPlans = (shipmentId: number) => listSavedPlans().filter((p) => p.shipment_id === shipmentId);
 
 export const planResult = (planId: number): PlanResult | null => {
   const row = query<{ result_json: string }>('SELECT result_json FROM load_plans WHERE id = ?', [planId])[0];

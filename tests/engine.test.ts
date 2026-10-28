@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RULES, MODEL_ORDER, runModel, type EngineSku, type ModelId, type PlacedBox, type PlanRequest } from '../src/engine';
+import { DEFAULT_RULES, MODEL_ORDER, poseOf, runModel, runShipment, type EngineSku, type ModelId, type PlacedBox, type PlanRequest } from '../src/engine';
+import { parseMaterialDescription, skuFromSap } from '../src/db/material';
+import { SAP_SKU_ROWS } from '../src/db/seed-skus';
 import { supportFraction } from '../src/engine/common';
 import { rowPattern } from '../src/engine/tiers';
 import { checkStability, TIP } from '../src/engine/stability';
@@ -177,5 +179,89 @@ describe('physics rules and fill direction', () => {
       const t1 = r.tiers.find((t) => t.index === 1)!;
       expect(t1.x0 + t1.depth).toBeGreaterThan(truck.length - 101);
     }
+  });
+});
+
+describe('shipments over several trucks', () => {
+  const small = { length: 300, width: 240, height: 200 };
+
+  it('adds trucks until every fixed quantity is loaded, in line order', () => {
+    for (const model of MODEL_ORDER) {
+      const order = [
+        { sku: sku(1, 60, 40, 35), qty: 300 },
+        { sku: sku(2, 45, 30, 28, { group: 'B' }), qty: 120 },
+      ];
+      const r = runShipment(model, { trucks: [small], lines: order, rules: DEFAULT_RULES[model], timeBudgetMs: 60 });
+      expect(r.trucks.length, model).toBeGreaterThan(1);
+      expect(r.unplaced).toEqual({});
+      expect(r.totalCartons).toBe(420);
+      const per = (id: number) => r.trucks.reduce((s, p) => s + (p.loaded[id] ?? 0), 0);
+      expect(per(1)).toBe(300);
+      expect(per(2)).toBe(120);
+      for (const p of r.trucks) assertValid(model, { truck: small, lines: order, rules: DEFAULT_RULES[model] }, p.boxes);
+      // The first truck carries the first line before the second.
+      expect(r.trucks[0].loaded[1]).toBeGreaterThan(0);
+    }
+  });
+
+  it('uses the trucks given, then repeats the last one; "fill max" lines do not add trucks', () => {
+    const tiny = { length: 120, width: 240, height: 200 };
+    const r = runShipment('standard', { trucks: [tiny, small], lines: [{ sku: sku(1, 60, 40, 35), qty: 200 }, { sku: sku(3, 50, 45, 40), qty: null }], rules: DEFAULT_RULES.standard, timeBudgetMs: 60 });
+    expect(Math.max(...r.trucks[0].boxes.map((b) => b.x + b.dx))).toBeLessThanOrEqual(120);
+    expect(r.trucks.length).toBeGreaterThan(1);
+    expect(r.trucks.slice(1).every((p) => p.boxes.every((b) => b.x + b.dx <= 300))).toBe(true);
+    const only = runShipment('standard', { trucks: [small], lines: [{ sku: sku(3, 50, 45, 40), qty: null }], rules: DEFAULT_RULES.standard, timeBudgetMs: 60 });
+    expect(only.trucks).toHaveLength(1);
+  });
+
+  it('stops when a carton fits no truck and reports it unplaced', () => {
+    const r = runShipment('standard', { trucks: [small], lines: [{ sku: sku(1, 60, 40, 35), qty: 10 }, { sku: sku(2, 400, 300, 300), qty: 3 }], rules: DEFAULT_RULES.standard, timeBudgetMs: 60 });
+    expect(r.trucks).toHaveLength(1);
+    expect(r.unplaced).toEqual({ 2: 3 });
+  });
+
+  it('bebas builds real tiers now', () => {
+    const r = runModel('free', { truck, lines, rules: DEFAULT_RULES.free, timeBudgetMs: 100 });
+    expect(r.segmentTiers).toBe(false);
+  });
+});
+
+describe('carton poses', () => {
+  const dims: [number, number, number] = [50, 30, 20];
+  it('names which face is up and which faces the door', () => {
+    expect(poseOf({ dx: 30, dy: 50, dz: 20 }, dims)).toBe('A');
+    expect(poseOf({ dx: 50, dy: 30, dz: 20 }, dims)).toBe('B');
+    expect(poseOf({ dx: 20, dy: 50, dz: 30 }, dims)).toBe('C');
+    expect(poseOf({ dx: 50, dy: 20, dz: 30 }, dims)).toBe('D');
+    expect(poseOf({ dx: 20, dy: 30, dz: 50 }, dims)).toBe('E');
+    expect(poseOf({ dx: 30, dy: 20, dz: 50 }, dims)).toBe('F');
+    // Equal sides: the upright pose is named first.
+    expect(poseOf({ dx: 40, dy: 40, dz: 30 }, [40, 40, 30])).toBe('A');
+  });
+});
+
+describe('SAP material descriptions', () => {
+  it('reads the size in mm and the board grade, and flags odd grades', () => {
+    expect(parseMaterialDescription('CCBOX;STD,PPSB,355L,215W,175H,K150/M150/')).toEqual({ length_cm: 35.5, width_cm: 21.5, height_cm: 17.5, boxCode: 'PPSB', board: 'K150/M150', issues: [] });
+    const issues = (s: string) => parseMaterialDescription(s)!.issues;
+    expect(issues('CCBOX;STD,SFTPCK LION,510L,410W,300H,425')).toEqual(['gsm-only']);
+    expect(issues('CCBOX;STD,NVT150S,440L,370W,505H,550G')).toEqual(['gsm-only']);
+    expect(issues('CCBOX;STD,LNL1,485L,455W,310H,550GSM')).toEqual(['gsm-only']);
+    expect(issues('CCBOX;STD,BRJR,490L,240W,550H,150K/150M/')).toEqual(['reversed']);
+    expect(issues('CCBOX;STD,HECTR1P,675L,454W,327H,K275/M1')).toEqual(['truncated']);
+    expect(issues('CCBOX;STD,HPFS,400L,400W,375H,K150/M15/M')).toEqual(['truncated']);
+    expect(issues('CCBOX;STD,NL2M,680L,330W,360H,125/150M/1')).toEqual(['no-k']);
+    expect(issues('CCBOX;STD,PPBL,370L,310W,319H,WK200/M150')).toEqual(['white-kraft']);
+    expect(issues('CCBOX;STD,D2D3,530L,445W,370H,K200/M150')).toEqual([]);
+    const homeline = parseMaterialDescription('CCBOX;STD,HL4R,466.5L,366.5W,419H,K200/M')!;
+    expect(homeline.issues).toEqual(['decimal', 'truncated']);
+    expect(homeline.length_cm).toBeCloseTo(46.65);
+    expect(parseMaterialDescription('no size here')).toBeNull();
+  });
+
+  it('every supplied SKU row has a size', () => {
+    const parsed = SAP_SKU_ROWS.map((r) => skuFromSap(...r));
+    expect(parsed.every((p) => p && p.length_cm > 0 && p.width_cm > 0 && p.height_cm > 0)).toBe(true);
+    expect(parsed.filter((p) => p!.issues.some((i) => i !== 'white-kraft')).map((p) => p!.code)).toHaveLength(10);
   });
 });
