@@ -32,6 +32,7 @@ export class TruckView {
   private frame = 0;
   private plan: PlanResult | null = null;
   private truck: EngineTruck | null = null;
+  private sizes = true;
   private needsRender = true;
   private mesh: THREE.InstancedMesh | null = null;
   private visible: PlacedBox[] = [];
@@ -97,8 +98,10 @@ export class TruckView {
     this.needsRender = true;
   }
 
-  setTruck(truck: EngineTruck | null, reframe = true) {
+  /** `sizes` false leaves out the size lines, for the stand-in truck shown before one is chosen. */
+  setTruck(truck: EngineTruck | null, reframe = true, sizes = true) {
     this.truck = truck;
+    this.sizes = sizes;
     clear(this.truckGroup);
     clear(this.labelGroup);
     if (!truck || !truck.length) {
@@ -177,6 +180,10 @@ export class TruckView {
       this.labelGroup.add(sprite);
     };
     const tick = size * 0.3;
+    const cabL = Math.min(190, Math.max(90, L * 0.2));
+    label(t.cab, -cabL / 2 - 25, Math.min(H * 0.92, 230) + size * 1.1, W / 2, true);
+    label(t.door, L + off, H + size * 1.1, W / 2, true);
+    if (!this.sizes) return;
     // Height at the door corner on the near side, width across the door, length along the near side.
     line([[L + off, 0, W + off], [L + off, H, W + off]]);
     line([[L + off - tick, 0, W + off], [L + off + tick, 0, W + off]]);
@@ -188,9 +195,6 @@ export class TruckView {
     label(t.dimWidth(fmt.int(W)), L + off + size * 2.4, size * 0.6, W / 2);
     line([[0, 0, W + off], [L, 0, W + off]]);
     label(t.dimLength(fmt.int(L)), L / 2, size * 0.6, W + off + size * 0.8);
-    const cabL = Math.min(190, Math.max(90, L * 0.2));
-    label(t.cab, -cabL / 2 - 25, Math.min(H * 0.92, 230) + size * 1.1, W / 2, true);
-    label(t.door, L + off, H + size * 1.1, W / 2, true);
   }
 
   frameCamera() {
@@ -198,10 +202,15 @@ export class TruckView {
     const { length: L, width: W, height: H } = this.truck;
     // The view takes in the cab in front of the box as well as the door labels behind it.
     const cabL = Math.min(190, Math.max(90, L * 0.2)) + 25;
-    const span = Math.max(L + cabL, W * 2, H * 2) * 1.1;
+    // Fit a sphere around cab, box and labels into the narrower of the two view angles.
     const cx = (L - cabL) / 2;
-    this.camera.position.set(cx + span * 0.55, H + span * 0.55, W + span * 0.75);
+    const radius = Math.hypot(L + cabL + 80, H + 60, W + 80) / 2;
+    const vFov = (this.camera.fov * Math.PI) / 180;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+    const dist = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * 1.02;
+    const dir = new THREE.Vector3(0.55, 0.62, 0.75).normalize();
     this.controls.target.set(cx, H / 3, W / 2);
+    this.camera.position.copy(this.controls.target).addScaledVector(dir, dist);
     this.controls.update();
     this.needsRender = true;
   }

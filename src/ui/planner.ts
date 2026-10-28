@@ -82,7 +82,6 @@ export class Planner {
   private workers: Worker[] = [];
 
   // Mount points that re-render independently.
-  private shipmentInput = h('input', { type: 'text', id: 'shipment-no', placeholder: t.shipmentNoPlaceholder, autocomplete: 'off' });
   private shipmentHint = h('div', { class: 'shipment-hint' });
   private noteInput = h('input', { type: 'text', id: 'note', placeholder: t.notePlaceholder });
   private destCard = h('div', { class: 'dest-card' });
@@ -100,8 +99,29 @@ export class Planner {
   private detailsBox = h('section', { class: 'details panel' });
   private loading = h('div', { class: 'loading-overlay', hidden: true });
   private destCombo: ReturnType<typeof combobox<Destination>>;
+  private shipmentCombo: ReturnType<typeof combobox<ShipmentPick>>;
 
   constructor(private onSaved: () => void) {
+    // Shipment number: type a new one, or pick a saved shipment (or the example) to reopen it.
+    this.shipmentCombo = combobox<ShipmentPick>({
+      id: 'shipment-no',
+      placeholder: t.shipmentNoPlaceholder,
+      freeText: true,
+      search: (q) => searchShipments(q),
+      render: (p) =>
+        p.kind === 'example'
+          ? h('div', { class: 'opt' }, h('strong', {}, `✦ ${t.exampleShipment}`), h('div', { class: 'opt-meta' }, t.exampleShipmentHint))
+          : h(
+              'div',
+              { class: 'opt' },
+              h('strong', { class: 'mono' }, p.no),
+              p.draft ? h('span', { class: 'tag' }, t.draftTag) : null,
+              h('span', { class: 'muted' }, ` ${t.shipmentTrucks(p.trucks)} · ${t.models[p.model]}`),
+              h('div', { class: 'opt-meta' }, [p.customer, p.city, p.plates, p.created.slice(0, 10)].filter(Boolean).join(' · ')),
+            ),
+      keepText: (p) => (p.kind === 'example' ? t.exampleNo : p.draft ? '' : p.no),
+      onPick: (p) => (p.kind === 'example' ? this.loadExample() : this.loadShipment(p.id)),
+    });
     this.destCombo = combobox<Destination>({
       id: 'dest-search',
       placeholder: t.destinationPlaceholder,
@@ -164,8 +184,8 @@ export class Planner {
   // ---------- Input panel ----------
 
   private inputPanel(): HTMLElement {
-    this.shipmentInput.addEventListener('input', () => {
-      this.shipmentNo = this.shipmentInput.value.trim();
+    this.shipmentCombo.input.addEventListener('input', () => {
+      this.shipmentNo = this.shipmentCombo.input.value.trim();
       this.renderShipmentHint();
       this.renderHelper();
     });
@@ -197,10 +217,7 @@ export class Planner {
     return h(
       'section',
       { class: 'input panel' },
-      h('h2', {}, t.shipmentTitle),
-      h('label', { for: 'shipment-no' }, t.shipmentNo),
-      this.shipmentInput,
-      this.shipmentHint,
+      h('h2', {}, t.inputTitle),
       h('label', { for: 'dest-search' }, t.destination),
       this.destCombo.el,
       this.destCard,
@@ -649,6 +666,7 @@ export class Planner {
     return h(
       'section',
       { class: 'stage panel' },
+      h('div', { class: 'shipment-bar' }, h('label', { for: 'shipment-no' }, t.shipmentNo), this.shipmentCombo.el, this.shipmentHint),
       this.stageHead,
       h('div', { class: 'canvas-wrap' }, this.canvasHost, this.helper, this.pickedBox),
       this.stageTools,
@@ -710,9 +728,9 @@ export class Planner {
     ];
     this.helper.hidden = false;
     this.helper.replaceChildren(
-      h('strong', {}, this.shipmentNo ? t.helperReady(this.shipmentNo) : `ⓘ ${t.shipmentEmpty}`),
+      // Kept small (the shipment field above already explains an empty number), so the empty truck stays visible.
+      h('strong', {}, this.shipmentNo ? t.helperReady(this.shipmentNo) : t.helperTitle),
       h('ol', {}, ...steps.map(([label, done]) => h('li', { class: done ? 'done' : '' }, done ? '✓ ' : '', label))),
-      h('p', {}, this.shipmentNo ? t.helperRun : t.shipmentEmptyHint),
     );
   }
 
@@ -793,8 +811,16 @@ export class Planner {
   private update3d(truckChanged: boolean) {
     if (!this.view) return;
     const tr = this.slotTruck(this.truckIdx);
-    if (truckChanged) this.view.setTruck(tr ? { length: tr.length, width: tr.width, height: tr.height } : null);
+    // With no truck chosen yet, an empty truck of a common size stands in, without size labels.
+    const stand = tr ? null : this.placeholderTruck();
+    if (truckChanged) this.view.setTruck(tr ? { length: tr.length, width: tr.width, height: tr.height } : stand, true, !!tr);
     this.view.setPlan(this.selectedPlan(), this.colorMode, this.lines.map((l) => l.sku.id), this.upToTier, this.upToTier);
+  }
+
+  private placeholderTruck() {
+    const type = this.trucks.find((x) => !x.is_template && /engkel/i.test(x.name) && hasDims(typeDims(x))) ?? this.trucks.find((x) => hasDims(typeDims(x)));
+    const d = type ? typeDims(type) : { length: 420, width: 200, height: 200 };
+    return { length: d.length, width: d.width, height: d.height };
   }
 
   private focusTier(tier: number) {
@@ -945,7 +971,7 @@ export class Planner {
         isTemp = true;
       } else {
         no = this.shipmentNo = answer.no;
-        this.shipmentInput.value = no;
+        this.shipmentCombo.setText(no);
         this.renderShipmentHint();
       }
     }
@@ -1168,6 +1194,41 @@ export class Planner {
     this.renderHelper();
   }
 
+  /**
+   * A made-up shipment to try the app: three real SAP SKUs that need two CDD trucks, so the
+   * multi-truck tabs, plate numbers and carton positions all show. Nothing is saved until the user saves it.
+   */
+  loadExample() {
+    this.cancel();
+    const dest = repo.searchDestinations('UNIRAMA', 1)[0] ?? repo.listDestinations()[0] ?? null;
+    this.destination = dest;
+    this.destCombo.setText(dest ? `${dest.customer} – ${dest.city}` : '');
+    this.shipmentId = null;
+    this.shipmentNo = t.exampleNo;
+    this.tempNo = '';
+    this.shipmentCombo.setText(this.shipmentNo);
+    this.note = '';
+    this.noteInput.value = '';
+    const sku = (code: string) => repo.skuByCode(code);
+    this.lines = (
+      [
+        ['69921603', 300], // Paseo Baby Puresoft Softpack, small carton
+        ['69920852', 200], // Paseo Elegant Facial Travelpack
+        ['69921667', 120], // Nice Softpack 320 helai, large carton
+      ] as const
+    )
+      .map(([code, qty]) => ({ sku: sku(code)!, qty }))
+      .filter((l) => l.sku);
+    const cdd = this.trucks.find((x) => !x.is_template && /CDD/i.test(x.name) && /maks/i.test(x.variant ?? '')) ?? this.trucks.find((x) => hasDims(typeDims(x))) ?? null;
+    this.slots = [{ ...this.newSlot(cdd?.id ?? null), plateNo: 'B 9514 KXT' }];
+    this.results = {};
+    this.stale = false;
+    this.truckIdx = 0;
+    this.renderAll();
+    this.update3d(true);
+    this.run();
+  }
+
   /** Reopens a saved shipment: its order lines, every truck with its plate number, and the saved plans. */
   loadShipment(shipmentId: number, truckSeq = 1) {
     const plans = repo.shipmentPlans(shipmentId);
@@ -1177,7 +1238,7 @@ export class Planner {
     this.shipmentId = shipmentId;
     this.shipmentNo = first.is_temp ? '' : first.shipment_no ?? '';
     this.tempNo = first.is_temp ? first.shipment_no ?? '' : '';
-    this.shipmentInput.value = this.shipmentNo;
+    this.shipmentCombo.setText(this.shipmentNo);
     this.note = first.reference ?? '';
     this.noteInput.value = this.note;
     this.destination = first.destination_id ? repo.listDestinations().find((d) => d.id === first.destination_id) ?? null : null;
@@ -1214,7 +1275,7 @@ export class Planner {
 function askShipmentNo(tempNo: string): Promise<{ no: string; draft: boolean } | null> {
   return new Promise((resolve) => {
     const dialog = h('dialog', { class: 'form-dialog narrow' });
-    const input = h('input', { type: 'text', placeholder: t.shipmentNoPlaceholder, 'aria-label': t.shipmentNo });
+    const input = h('input', { type: 'text', placeholder: t.shipmentNoExample, 'aria-label': t.shipmentNo });
     const error = h('p', { class: 'alert', hidden: true });
     let answer: { no: string; draft: boolean } | null = null;
     const done = (a: { no: string; draft: boolean } | null) => {
@@ -1286,4 +1347,36 @@ function riskText(plan: PlanResult, b: PlacedBox) {
 function physicsNumbers(plan: PlanResult): [number, number, number, number, number] {
   const p = withDefaults(plan.model, plan.rules).physics;
   return [p.brakeG, p.accelG, p.sideG, p.bumpG, p.friction];
+}
+
+type ShipmentPick =
+  | { kind: 'example' }
+  | { kind: 'saved'; id: number; no: string; draft: boolean; trucks: number; model: ModelId; customer: string | null; city: string | null; plates: string; created: string };
+
+/** Saved shipments matching the typed text (number, customer, city or plate), newest first, then the example plan. */
+function searchShipments(text: string): ShipmentPick[] {
+  const q = text.trim().toLowerCase();
+  const byId = new Map<number, Extract<ShipmentPick, { kind: 'saved' }>>();
+  for (const p of repo.listSavedPlans()) {
+    const row = byId.get(p.shipment_id);
+    if (row) {
+      if (p.plate_no) row.plates = row.plates ? `${row.plates}, ${p.plate_no}` : p.plate_no;
+      continue;
+    }
+    byId.set(p.shipment_id, {
+      kind: 'saved',
+      id: p.shipment_id,
+      no: p.shipment_no ?? '',
+      draft: !!p.is_temp,
+      trucks: p.truck_count,
+      model: p.model,
+      customer: p.customer,
+      city: p.city,
+      plates: p.plate_no ?? '',
+      created: p.created_at,
+    });
+  }
+  const saved = [...byId.values()].filter((p) => !q || [p.no, p.customer, p.city, p.plates].some((x) => x?.toLowerCase().includes(q)));
+  const example: ShipmentPick[] = !q || t.exampleShipment.toLowerCase().includes(q) || t.exampleNo.toLowerCase().includes(q) ? [{ kind: 'example' }] : [];
+  return [...saved.slice(0, 8), ...example];
 }

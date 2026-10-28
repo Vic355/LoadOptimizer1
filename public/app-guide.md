@@ -25,9 +25,9 @@ The top bar has three pages: "Perencanaan" (planning), "Riwayat Rencana" (saved 
 
 ## Planning a load ("Perencanaan")
 
-The planner starts empty. Until a shipment number is entered, a small yellow helper says "Nomor Shipment / SO masih kosong", and the 3D area shows a checklist of the steps still missing.
+The planner starts empty: the 3D area shows an empty truck with a small checklist of the steps still missing. The left panel is "Input Pengiriman"; the shipment number sits at the top centre, above the 3D view.
 
-1. "Nomor Shipment / SO": the shipment or sales order number. It is the ID of the saved plan. It is not needed to calculate: without it the plan gets a temporary number (TMP-…) and can be saved as a draft ("draf") and given its real number later.
+1. "Nomor Shipment / SO" (top centre): type the shipment or sales order number. It is the ID of the saved plan. Clicking the field also lists saved shipments (search by number, customer, city or police number); picking one reopens it with all its trucks. The last entry, "✦ Contoh rencana", loads a made-up example shipment (SO-CONTOH-001: three Paseo and Nice SKUs that need two CDD trucks) and calculates it, to try the app. While the number is empty, a small yellow helper says "Nomor Shipment / SO masih kosong". A number is not needed to calculate: without it the plan gets a temporary number (TMP-…) and can be saved as a draft ("draf") and given its real number later.
 2. "Tujuan": search by customer, city or zone. Each destination lists the vehicles allowed there; the largest is the maximum truck for that destination.
 3. "Produk (SKU)": search by SAP material number or name and add lines. Leave the quantity empty ("maks") to fill the remaining space with that SKU. Drag rows to change the loading order. "Tempel dari Excel" pastes two columns from Excel: SAP material number and quantity. "+ SKU baru" creates a personal SKU on the spot.
 4. "Truk": one card per truck ("Truk 1", "Truk 2", …). Each card has:
@@ -89,7 +89,7 @@ Saved plans keep the rules and SKU sizes used at the time, so later changes do n
 
 ## Master data ("Data Master")
 
-Tabs: "SKU", "Truk", "Nomor Polisi", "Tujuan", "Aturan Model", "Database". Without master mode these are read-only except personal SKUs and personal rules.
+Tabs: "SKU", "Tipe Truk", "Nomor Polisi", "Tujuan", "Aturan Model", "Database". Without master mode these are read-only except personal SKUs and personal rules.
 
 ### SKU
 Fields: SAP material number ("No. material SAP"), name, length, width and height in cm, weight in kg, "Tumpukan aman (tingkat)" (how many cartons high a stack may safely be, counted from the floor), "Beban atas maks / BCT (kg)", product group, packaging (carton or plastic bundle "Bal plastik"), "Boleh rebah" (may lie on its side), and "Penyesuaian P/L/T" (adjustment per side in cm: + for bulging cartons, − for shrinking ones). "Aktif" hides an SKU from planning when off.
@@ -99,7 +99,7 @@ SAP fields: "No. C-box" (carton number), "Kualitas karton" (board grade) and "Ma
 - Rows whose material description is not in the usual form are kept and tagged "format tidak baku" (e.g. only "425" or "550GSM", "150K/150M" reversed, a cut-off "K275/M1", or decimal sizes). Check those cartons.
 - The SKU list holds the 281 real SAP SKUs. Weight is not in the SAP data yet; the safe stack height starts at "up to a 250 cm roof", the product group is guessed from the name, and "Boleh rebah" starts off. Change these per SKU where needed.
 
-### Truk (trucks)
+### Tipe Truk (truck types)
 Fields: code, name, variant, body type (Box, Wingbox, Bak terbuka, Kontainer), estimated volume (m³), inner length × width × height (cm), "Dimensi estimasi" flag, "Template khusus" (one-off truck), notes.
 Truck types with a volume range have three entries: Minimum, Rata-rata (average) and Maksimum. Dimensions marked as estimates were derived from the logistics team's cubic volume (width and height fixed, length scaled). Replace them with tape-measured values here; this directly improves plan accuracy. ISO 20' and 40' containers use standard dimensions.
 
@@ -137,7 +137,7 @@ Each model has its own rules. Changes apply to the next optimization; saved plan
 - Why did not everything fit? The truck is full under the current rules. Try "Bebas", a larger truck, allowing more rotation, or lowering fixed quantities. Check that SKU sizes and the "Penyesuaian" values are right.
 - Why does Standar load fewer cartons than Bebas? Standar keeps neat, stable tiers and respects safe stack height; Bebas maximises count.
 - How do I add a new SKU for everyone? Enter master mode, then "Data Master" > "SKU" > "Tambah baru" (or "Impor dari Excel"). Without master mode you can add a personal SKU and ask the master to publish it.
-- How do I add a truck or fix truck sizes? Master mode, "Data Master" > "Truk".
+- How do I add a truck type or fix truck sizes? Master mode, "Data Master" > "Tipe Truk". For one real truck, use its police number in "Nomor Polisi".
 - How do I change which trucks a destination may use? Master mode, "Data Master" > "Tujuan", edit the destination.
 - Can I plan for a truck that is not in the list, or an ODOL truck? Yes: enter its police number and change "Ukuran dalam (cm)" on its truck card. The size is saved with that police number.
 - Why are there more trucks than I entered? The cartons with fixed quantities did not fit, so the app added trucks like the last one. Remove lines, lower quantities or pick a larger truck to use fewer.

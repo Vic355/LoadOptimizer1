@@ -45,9 +45,15 @@ export const t = {
   lockNote: 'Kunci ini melindungi dari perubahan tidak sengaja di prototipe, bukan keamanan penuh.',
 
   // Input
-  shipmentTitle: 'Shipment / Sales Order',
+  inputTitle: 'Input Pengiriman',
   shipmentNo: 'Nomor Shipment / SO',
-  shipmentNoPlaceholder: 'mis. SO-2026-001234',
+  shipmentNoPlaceholder: 'Ketik nomor baru atau cari rencana tersimpan',
+  shipmentNoExample: 'mis. SO-2026-001234',
+  shipmentPickHint: 'Rencana tersimpan',
+  shipmentTrucks: (n: number) => `${n} truk`,
+  exampleShipment: 'Contoh rencana',
+  exampleShipmentHint: 'Data contoh untuk mencoba aplikasi: 3 SKU Paseo dan Nice, 2 truk CDD',
+  exampleNo: 'SO-CONTOH-001',
   shipmentEmpty: 'Nomor Shipment / SO masih kosong',
   shipmentEmptyHint: 'Boleh dihitung dulu tanpa nomor: rencana mendapat nomor sementara dan bisa disimpan sebagai draf.',
   shipmentDraftHint: 'Isi nomor shipment sebelum menyimpan, atau simpan sebagai draf.',
@@ -156,7 +162,7 @@ export const t = {
   cartonsShort: 'krt',
   helperSteps: ['Nomor Shipment / SO', 'Tujuan', 'Produk (SKU) dan jumlah', 'Truk: jenis, ukuran, nomor polisi', 'Jalankan optimasi'],
   helperReady: (no: string) => `Shipment ${no}: belum dihitung`,
-  helperRun: 'Lengkapi yang belum dicentang, lalu klik "Jalankan Optimasi". Hasil ketiga model bisa dipilih di atas gambar.',
+  helperTitle: 'Langkah membuat rencana',
 
   // Loading
   loadingTitle: 'Sedang menghitung rencana muat',
@@ -427,7 +433,7 @@ export const t = {
 
   // Master data
   masterSkus: 'SKU',
-  masterTrucks: 'Truk',
+  masterTrucks: 'Tipe Truk',
   masterDestinations: 'Tujuan',
   masterRules: 'Aturan Model',
   masterDatabase: 'Database',

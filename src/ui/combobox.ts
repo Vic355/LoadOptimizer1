@@ -9,6 +9,8 @@ export interface ComboboxOptions<T> {
   /** Keep the typed text after picking (false clears the input, e.g. for adding SKU lines). */
   keepText?: (item: T) => string | null;
   id?: string;
+  /** The text is a value of its own (e.g. a new shipment number): nothing is highlighted until the user moves to a suggestion, so Enter keeps the typed text. */
+  freeText?: boolean;
 }
 
 /** Search-as-you-type input with a keyboard-navigable result list. */
@@ -48,7 +50,8 @@ export function combobox<T>(opts: ComboboxOptions<T>) {
   };
   const refresh = debounce(() => {
     items = opts.search(input.value);
-    active = items.length ? 0 : -1;
+    active = items.length && !opts.freeText ? 0 : -1;
+    if (opts.freeText && !items.length) return close();
     paint();
   }, 80);
 
@@ -60,6 +63,7 @@ export function combobox<T>(opts: ComboboxOptions<T>) {
     if (e.key === 'ArrowDown') active = Math.min(items.length - 1, active + 1);
     else if (e.key === 'ArrowUp') active = Math.max(0, active - 1);
     else if (e.key === 'Enter') {
+      if (active < 0) return close();
       e.preventDefault();
       pick(active);
       return;

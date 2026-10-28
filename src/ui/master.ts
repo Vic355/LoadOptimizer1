@@ -654,7 +654,7 @@ export class MasterData {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
     const counts = query<{ n: string; c: number }>(
-      `SELECT 'SKU' AS n, count(*) AS c FROM skus UNION ALL SELECT 'Truk', count(*) FROM truck_types UNION ALL SELECT 'Nomor polisi', count(*) FROM trucks
+      `SELECT 'SKU' AS n, count(*) AS c FROM skus UNION ALL SELECT 'Tipe truk', count(*) FROM truck_types UNION ALL SELECT 'Nomor polisi', count(*) FROM trucks
        UNION ALL SELECT 'Shipment', count(*) FROM shipments
        UNION ALL SELECT 'Tujuan', count(*) FROM destinations UNION ALL SELECT 'Rencana', count(*) FROM load_plans`,
     );
