@@ -70,7 +70,7 @@ export class History {
       if (this.from && day < this.from) return false;
       if (this.to && day > this.to) return false;
       if (this.status && p.status !== this.status) return false;
-      return !q || `${p.customer ?? ''} ${p.city ?? ''} ${p.zone ?? ''} ${p.reference ?? ''}`.toLowerCase().includes(q);
+      return !q || `${p.shipment_no ?? ''} ${p.plate_no ?? ''} ${p.customer ?? ''} ${p.city ?? ''} ${p.zone ?? ''} ${p.reference ?? ''}`.toLowerCase().includes(q);
     });
   }
 
@@ -90,7 +90,7 @@ export class History {
       h(
         'table',
         { class: 'pick-table' },
-        h('thead', {}, h('tr', {}, h('th', {}, t.date), h('th', {}, t.destination), h('th', {}, t.truck), h('th', {}, t.model), h('th', { class: 'num' }, t.cartons), h('th', {}, t.status))),
+        h('thead', {}, h('tr', {}, h('th', {}, t.date), h('th', {}, t.shipmentLabel), h('th', {}, t.destination), h('th', {}, t.truck), h('th', {}, t.model), h('th', { class: 'num' }, t.cartons), h('th', {}, t.status))),
         h(
           'tbody',
           {},
@@ -99,8 +99,9 @@ export class History {
               'tr',
               { class: p.id === this.selectedId ? 'on' : '', tabindex: '0', onclick: () => this.select(p.id), onkeydown: (e: Event) => (e as KeyboardEvent).key === 'Enter' && this.select(p.id) },
               h('td', { class: 'nowrap' }, fmtDate(p.created_at)),
+              h('td', { class: 'nowrap' }, h('strong', { class: 'mono' }, p.shipment_no ?? '–'), p.is_temp ? h('span', { class: 'tag warn' }, t.draftTag) : null),
               h('td', {}, p.customer ? `${p.customer} · ${p.city}` : '–', p.reference ? h('div', { class: 'muted small' }, p.reference) : null),
-              h('td', {}, this.truckName(p)),
+              h('td', {}, h('div', { class: 'nowrap' }, t.truckOf(p.truck_seq, p.truck_count), p.plate_no ? h('span', { class: 'mono' }, ` · ${p.plate_no}`) : null), h('div', { class: 'muted small' }, this.truckName(p))),
               h('td', {}, t.models[p.model]),
               h('td', { class: 'num' }, fmt.int(p.total_cartons)),
               h('td', {}, h('span', { class: `status-pill ${p.status}` }, t.statuses[p.status])),
@@ -123,7 +124,6 @@ export class History {
       return;
     }
     const result = repo.planResult(p.id);
-    const truck = JSON.parse(p.truck_json) as repo.PlanTruck;
     let status = p.status;
     const actual: Record<number, number | null> = p.actual_json ? JSON.parse(p.actual_json) : {};
     const tierWord = result?.segmentTiers ? t.segments : t.tierNo;
@@ -180,21 +180,31 @@ export class History {
       const shown = this.detailBox.querySelector('[role=status]');
       if (shown) shown.textContent = `${t.savedShort} ✓`;
     };
+    // Reprints the whole shipment: every truck's pages.
     const reprint = () => {
-      if (!result) return;
       const destination = p.destination_id ? repo.listDestinations().find((d) => d.id === p.destination_id) ?? null : null;
       const skus = repo.shipmentLines(p.shipment_id).map((l) => l.sku);
-      printPlan({ plan: result, truck, destination, reference: p.reference ?? '', skus, snapshot: null });
+      const trucks = repo
+        .shipmentPlans(p.shipment_id)
+        .map((x) => ({ plan: repo.planResult(x.id)!, truck: JSON.parse(x.truck_json) as repo.PlanTruck, plateNo: x.plate_no, seq: x.truck_seq }))
+        .filter((x) => x.plan);
+      printPlan({ trucks, shipmentNo: p.shipment_no ?? '', draft: !!p.is_temp, destination, note: p.reference ?? '', skus, snapshot: null });
     };
     const remove = async () => {
-      if (!(await confirmDialog(t.confirmDelete, t.delete, t.cancel))) return;
+      if (!(await confirmDialog(t.confirmDeleteShipment(p.shipment_no ?? '', p.truck_count), t.delete, t.cancel))) return;
       await repo.deleteShipment(p.shipment_id);
       this.selectedId = null;
       this.renderList();
     };
 
     this.detailBox.replaceChildren(
-      h('div', {}, h('h2', {}, `${fmtDate(p.created_at)} · ${p.customer ?? '–'}`), h('p', { class: 'muted' }, `${this.truckName(p)} · ${t.models[p.model]} · ${fmt.int(p.total_cartons)} ${t.cartons} ${t.plan.toLowerCase()}`)),
+      h(
+        'div',
+        {},
+        h('h2', {}, `${t.shipmentLabel} ${p.shipment_no ?? '–'}`, p.is_temp ? h('span', { class: 'tag warn' }, t.draftTag) : null),
+        h('p', {}, `${t.truckOf(p.truck_seq, p.truck_count)} · ${p.plate_no ?? t.noPlate} · ${this.truckName(p)}`),
+        h('p', { class: 'muted' }, `${fmtDate(p.created_at)} · ${p.customer ?? '–'} · ${t.models[p.model]} · ${fmt.int(p.total_cartons)} ${t.cartons} ${t.plan.toLowerCase()}`),
+      ),
       h('div', {}, h('span', { class: 'label' }, t.status), seg),
       h('label', { for: 'h-note' }, t.plannerNote, note),
       h(

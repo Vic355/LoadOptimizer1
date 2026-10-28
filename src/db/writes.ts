@@ -18,8 +18,45 @@ const TRUCK_COLUMNS = ['code', 'name', 'variant', 'body_type', 'est_volume_min',
 
 const SKU_COLUMNS = [
   'code', 'name', 'length_cm', 'width_cm', 'height_cm', 'mod_length_cm', 'mod_width_cm', 'mod_height_cm', 'weight_kg',
-  'safe_stack_layers', 'max_top_load_kg', 'can_lie_down', 'packaging', 'product_group', 'active', 'is_dummy',
+  'safe_stack_layers', 'max_top_load_kg', 'can_lie_down', 'packaging', 'product_group', 'active', 'is_dummy', 'cbox_code', 'board_grade', 'material_desc',
 ] as const;
+
+const VEHICLE_COLUMNS = ['plate_no', 'truck_type_id', 'inner_length_cm', 'inner_width_cm', 'inner_height_cm', 'notes'] as const;
+
+/** Plate numbers are compared in one spelling: capitals, single spaces ("b1234 xy" stays "B1234 XY"). */
+export const normalizePlate = (s: string) => s.toUpperCase().replace(/\s+/g, ' ').trim();
+
+/** One truck of a shipment as saved: the truck used, its plate number (optional) and its plan. */
+export interface ShipmentTruckInput {
+  truckTypeId: number | null;
+  plateNo: string | null;
+  truck: Fields;
+  plan: Fields;
+}
+
+export interface ShipmentInput {
+  /** The shipment being edited (a reopened plan or draft), if any. */
+  shipmentId: number | null;
+  shipmentNo: string;
+  /** True for a draft saved under a temporary number. */
+  isTemp: boolean;
+  destinationId: number | null;
+  note: string | null;
+  lines: { sku: Fields; qty: number | null }[];
+  trucks: ShipmentTruckInput[];
+}
+
+/** Adds the plate numbers to the vehicle register, or updates their type and size to the ones just used. */
+function upsertVehicles(trucks: ShipmentTruckInput[]): Statement[] {
+  return trucks
+    .filter((t) => t.plateNo)
+    .map((t) => ({
+      sql: `INSERT INTO trucks (plate_no, truck_type_id, inner_length_cm, inner_width_cm, inner_height_cm, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))
+            ON CONFLICT(plate_no) DO UPDATE SET truck_type_id = COALESCE(excluded.truck_type_id, trucks.truck_type_id), inner_length_cm = excluded.inner_length_cm,
+            inner_width_cm = excluded.inner_width_cm, inner_height_cm = excluded.inner_height_cm, updated_at = excluded.updated_at`,
+      params: [normalizePlate(t.plateNo!), t.truckTypeId, value(t.truck.length), value(t.truck.width), value(t.truck.height)],
+    }));
+}
 
 const value = (v: unknown): SqlParam => (v == null ? null : typeof v === 'number' || typeof v === 'string' ? v : typeof v === 'boolean' ? Number(v) : JSON.stringify(v));
 
@@ -83,19 +120,47 @@ export const WRITES = {
   setMeta: (db: Store, key: string, val: string) =>
     db.run('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, val]),
 
-  async saveShipmentPlan(db: Store, reference: string | null, destinationId: number | null, truckId: number | null, truck: unknown, lines: { sku: Fields; qty: number | null }[], plan: Fields): Promise<number> {
-    const shipmentId = await db.run('INSERT INTO shipments (reference, destination_id, truck_type_id, truck_json) VALUES (?, ?, ?, ?)', [reference, destinationId, truckId, JSON.stringify(truck)]);
-    const rows = lines.map((l, i) => ({ shipment_id: shipmentId, sku_id: Number(l.sku.id), sku_json: JSON.stringify(l.sku), qty: l.qty, position: i }));
-    await db.batch(insertStatements('shipment_lines', rows, D1_MAX_PARAMS));
-    return db.run('INSERT INTO load_plans (shipment_id, model, rules_json, total_cartons, tier_count, volume_utilization, result_json) VALUES (?, ?, ?, ?, ?, ?, ?)', [
-      shipmentId,
-      value(plan.model),
-      JSON.stringify(plan.rules),
-      value(plan.totalCartons),
-      (plan.tiers as unknown[]).length,
-      value(plan.volumeUtilization),
-      JSON.stringify(plan),
-    ]);
+  /**
+   * Saves a shipment with one plan per truck. A shipment number that already exists is replaced
+   * (its lines and plans), as is the shipment being edited; a draft saved under a number that
+   * another shipment has is merged into that one. Returns the shipment id.
+   */
+  async saveShipment(db: Store, s: ShipmentInput): Promise<number> {
+    const no = s.shipmentNo.trim();
+    if (!no) throw new Error('Shipment number required');
+    const byNo = (await db.all<{ id: number }>('SELECT id FROM shipments WHERE shipment_no = ?', [no]))[0]?.id ?? null;
+    const edited = s.shipmentId ? ((await db.all<{ id: number }>('SELECT id FROM shipments WHERE id = ?', [s.shipmentId]))[0]?.id ?? null) : null;
+    let id = byNo ?? edited;
+    const head = [no, s.isTemp ? 1 : 0, s.destinationId, s.note];
+    const before: Statement[] = [];
+    if (byNo != null && edited != null && edited !== byNo) before.push({ sql: 'DELETE FROM shipments WHERE id = ?', params: [edited] });
+    if (id != null) {
+      before.push(
+        { sql: "UPDATE shipments SET shipment_no = ?, is_temp = ?, destination_id = ?, reference = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", params: [...head, id] },
+        { sql: 'DELETE FROM shipment_lines WHERE shipment_id = ?', params: [id] },
+        { sql: 'DELETE FROM load_plans WHERE shipment_id = ?', params: [id] },
+      );
+      await db.batch([...before, ...upsertVehicles(s.trucks)]);
+    } else {
+      await db.batch(upsertVehicles(s.trucks));
+      id = await db.run("INSERT INTO shipments (shipment_no, is_temp, destination_id, reference, truck_json, updated_at) VALUES (?, ?, ?, ?, '{}', datetime('now', 'localtime'))", head);
+    }
+    const lines = s.lines.map((l, i) => ({ shipment_id: id, sku_id: Number(l.sku.id), sku_json: JSON.stringify(l.sku), qty: l.qty, position: i }));
+    const plans = s.trucks.map((t, i) => ({
+      shipment_id: id,
+      truck_seq: i + 1,
+      truck_type_id: t.truckTypeId,
+      plate_no: t.plateNo ? normalizePlate(t.plateNo) : null,
+      truck_json: JSON.stringify(t.truck),
+      model: value(t.plan.model),
+      rules_json: JSON.stringify(t.plan.rules),
+      total_cartons: value(t.plan.totalCartons),
+      tier_count: (t.plan.tiers as unknown[]).length,
+      volume_utilization: value(t.plan.volumeUtilization),
+      result_json: JSON.stringify(t.plan),
+    }));
+    await db.batch([...insertStatements('shipment_lines', lines, D1_MAX_PARAMS), ...plans.map((p) => insertStatements('load_plans', [p], D1_MAX_PARAMS)[0])]);
+    return id;
   },
   updatePlanTracking: (db: Store, planId: number, status: string, note: string | null, actual: unknown, outcome: unknown) =>
     db.run("UPDATE load_plans SET status = ?, planner_note = ?, actual_json = ?, outcome_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?", [
@@ -106,6 +171,19 @@ export const WRITES = {
       planId,
     ]),
   deleteShipment: (db: Store, shipmentId: number) => db.run('DELETE FROM shipments WHERE id = ?', [shipmentId]),
+
+  /** Master role: a vehicle in the register (plate number, truck type, measured inner size). */
+  async saveVehicle(db: Store, v: Fields): Promise<number> {
+    const row: Fields = { ...v, plate_no: normalizePlate(String(v.plate_no ?? '')) };
+    if (!row.plate_no) throw new Error('Plate number required');
+    const values = VEHICLE_COLUMNS.map((c) => value(row[c]));
+    if (v.id) {
+      await db.run(`UPDATE trucks SET ${VEHICLE_COLUMNS.map((c) => `${c}=?`).join(', ')}, updated_at = datetime('now', 'localtime') WHERE id=?`, [...values, Number(v.id)]);
+      return Number(v.id);
+    }
+    return db.run(`INSERT INTO trucks (${VEHICLE_COLUMNS.join(', ')}, updated_at) VALUES (${VEHICLE_COLUMNS.map(() => '?').join(',')}, datetime('now', 'localtime'))`, values);
+  },
+  deleteVehicle: (db: Store, id: number) => db.run('DELETE FROM trucks WHERE id = ?', [id]),
 };
 
 export type WriteOp = keyof typeof WRITES;
@@ -116,7 +194,7 @@ export type WriteResult<K extends WriteOp> = Awaited<ReturnType<(typeof WRITES)[
 /** Tables an operation can change (cascades included), so only those are reloaded afterwards. */
 export const TOUCHES: Record<WriteOp, TableName[]> = {
   saveTruck: ['truck_types'],
-  deleteTruck: ['truck_types', 'destination_trucks', 'shipments'],
+  deleteTruck: ['truck_types', 'trucks', 'destination_trucks', 'shipments', 'load_plans'],
   saveDestination: ['destinations', 'destination_trucks'],
   deleteDestination: ['destinations', 'destination_trucks', 'shipments'],
   saveSku: ['skus'],
@@ -125,9 +203,11 @@ export const TOUCHES: Record<WriteOp, TableName[]> = {
   deleteSku: ['skus'],
   saveRules: ['model_settings'],
   setMeta: ['meta'],
-  saveShipmentPlan: ['shipments', 'shipment_lines', 'load_plans'],
+  saveShipment: ['trucks', 'shipments', 'shipment_lines', 'load_plans'],
   updatePlanTracking: ['load_plans'],
   deleteShipment: ['shipments', 'shipment_lines', 'load_plans'],
+  saveVehicle: ['trucks', 'load_plans'],
+  deleteVehicle: ['trucks', 'load_plans'],
 };
 
 /**
@@ -135,7 +215,8 @@ export const TOUCHES: Record<WriteOp, TableName[]> = {
  * one-off trucks without it, as on the input and history screens; everything else is master data.
  */
 export function needsAdmin<K extends WriteOp>(op: K, args: WriteArgs<K>, adminSet: boolean): boolean {
-  if (op === 'saveShipmentPlan' || op === 'updatePlanTracking' || op === 'deleteShipment') return false;
+  // Saving a plan also records its trucks' plate numbers and sizes in the vehicle register.
+  if (op === 'saveShipment' || op === 'updatePlanTracking' || op === 'deleteShipment') return false;
   if (op === 'saveTruck') {
     const t = args[0] as Fields;
     return !(t.is_template === 1 && !t.id);

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EngineTruck, PlacedBox, PlanResult } from '../engine';
+import { t } from '../i18n/id';
+import { fmt } from './dom';
 import { skuColor, tierColor } from './colors';
 
 export type ColorMode = 'sku' | 'tier' | 'risk';
@@ -23,6 +25,8 @@ export class TruckView {
   private camera = new THREE.PerspectiveCamera(40, 1, 1, 20000);
   private controls: OrbitControls;
   private truckGroup = new THREE.Group();
+  /** KABIN / PINTU and the length, width and height of the cargo space; fixed to the truck, outside the load. */
+  private labelGroup = new THREE.Group();
   private cargoGroup = new THREE.Group();
   private resizeObserver: ResizeObserver;
   private frame = 0;
@@ -49,7 +53,7 @@ export class TruckView {
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
     sun.position.set(-600, 1200, 900);
     this.scene.add(sun);
-    this.scene.add(this.truckGroup, this.cargoGroup);
+    this.scene.add(this.truckGroup, this.labelGroup, this.cargoGroup);
 
     // A click (not a drag) selects the carton under the pointer.
     let down: { x: number; y: number } | null = null;
@@ -96,6 +100,7 @@ export class TruckView {
   setTruck(truck: EngineTruck | null, reframe = true) {
     this.truck = truck;
     clear(this.truckGroup);
+    clear(this.labelGroup);
     if (!truck || !truck.length) {
       this.needsRender = true;
       return;
@@ -103,41 +108,100 @@ export class TruckView {
     const { length: L, width: W, height: H } = truck;
     const isDark = document.documentElement.dataset.theme === 'dark';
     const lineColor = isDark ? 0x9fb0bf : 0x3a4855;
+    const bodyColor = isDark ? 0x56636f : 0x8c96a0;
+    const add = (obj: THREE.Object3D, x: number, y: number, z: number) => (obj.position.set(x, y, z), this.truckGroup.add(obj), obj);
+    const mat = (color: number, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...extra });
 
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(L, W),
-      new THREE.MeshStandardMaterial({ color: isDark ? 0x26313b : 0xc9d1d8, side: THREE.DoubleSide }),
-    );
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(L, W), mat(isDark ? 0x26313b : 0xc9d1d8, { side: THREE.DoubleSide }));
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(L / 2, 0, W / 2);
-    this.truckGroup.add(floor);
+    add(floor, L / 2, 0, W / 2);
+    add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(L, H, W)), new THREE.LineBasicMaterial({ color: lineColor })), L / 2, H / 2, W / 2);
 
-    const shell = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(L, H, W)),
-      new THREE.LineBasicMaterial({ color: lineColor }),
-    );
-    shell.position.set(L / 2, H / 2, W / 2);
-    this.truckGroup.add(shell);
+    // Truck head in front of x = 0: cab body, a dark windscreen facing forward, bumper and wheels.
+    const cabL = Math.min(190, Math.max(90, L * 0.2));
+    const cabH = Math.min(H * 0.92, 230);
+    const cabX = -cabL / 2 - 25;
+    add(new THREE.Mesh(new THREE.BoxGeometry(cabL, cabH, W * 0.96), mat(isDark ? 0x5b82b8 : 0x3f6fae)), cabX, cabH / 2, W / 2);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.8, cabH * 0.38), mat(0x1c2733, { roughness: 0.2, side: THREE.DoubleSide }));
+    glass.rotation.y = -Math.PI / 2;
+    add(glass, cabX - cabL / 2 - 0.5, cabH * 0.7, W / 2);
+    add(new THREE.Mesh(new THREE.BoxGeometry(14, 22, W), mat(0x2a3138)), cabX - cabL / 2 - 4, 12, W / 2);
+    // Chassis under the cargo floor joins the head to the box, so they read as one truck.
+    add(new THREE.Mesh(new THREE.BoxGeometry(L + cabL + 25, 14, W * 0.5), mat(0x2a3138)), (L - cabL - 25) / 2, -9, W / 2);
+    const r = Math.min(48, Math.max(30, H * 0.18));
+    const wheel = () => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 26, 24), mat(0x1f2328, { roughness: 0.9 }));
+      m.rotation.x = Math.PI / 2;
+      return m;
+    };
+    const axles = [cabX, ...(L > 600 ? [L - r * 3.4, L - r * 1.2] : [L - r * 1.4])];
+    for (const x of axles) for (const z of [W * 0.12, W * 0.88]) add(wheel(), x, -r * 0.55, z);
 
-    // Cab marker in front of x = 0, so the loading direction is obvious.
-    const cabH = Math.min(H, 220);
-    const cab = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.min(180, L * 0.18), cabH, W),
-      new THREE.MeshStandardMaterial({ color: isDark ? 0x56636f : 0x8c96a0, transparent: true, opacity: 0.55 }),
-    );
-    cab.position.set(-Math.min(180, L * 0.18) / 2 - 20, cabH / 2, W / 2);
-    this.truckGroup.add(cab);
+    // Rear doors, swung open against the sides: the open end is the door.
+    for (const [hinge, angle] of [
+      [0, (10 * Math.PI) / 180],
+      [W, (170 * Math.PI) / 180],
+    ] as const) {
+      const leaf = new THREE.Mesh(new THREE.PlaneGeometry(W / 2, H), mat(bodyColor, { transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+      const pivot = new THREE.Group();
+      leaf.position.set(hinge === 0 ? W / 4 : -W / 4, 0, 0);
+      pivot.add(leaf);
+      pivot.rotation.y = angle;
+      add(pivot, L, H / 2, hinge);
+    }
 
+    this.drawLabels();
     if (reframe) this.frameCamera();
     this.needsRender = true;
+  }
+
+  /** Shows or hides the cab, door and size labels. */
+  setLabels(on: boolean) {
+    this.labelGroup.visible = on;
+    this.needsRender = true;
+  }
+
+  private drawLabels() {
+    if (!this.truck) return;
+    const { length: L, width: W, height: H } = this.truck;
+    const isDark = document.documentElement.dataset.theme === 'dark';
+    const ink = isDark ? '#dbe4ec' : '#24313d';
+    const color = isDark ? 0xa9b8c6 : 0x4b5866;
+    const size = Math.min(34, Math.max(16, Math.max(L, W * 2) * 0.03));
+    const off = size * 1.2;
+    const line = (pts: [number, number, number][]) =>
+      this.labelGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p))), new THREE.LineBasicMaterial({ color })));
+    const label = (text: string, x: number, y: number, z: number, strong = false) => {
+      const sprite = textSprite(text, strong ? '#ffffff' : ink, strong ? '#2f6db5' : null, size * (strong ? 1.15 : 1));
+      sprite.position.set(x, y, z);
+      this.labelGroup.add(sprite);
+    };
+    const tick = size * 0.3;
+    // Height at the door corner on the near side, width across the door, length along the near side.
+    line([[L + off, 0, W + off], [L + off, H, W + off]]);
+    line([[L + off - tick, 0, W + off], [L + off + tick, 0, W + off]]);
+    line([[L + off - tick, H, W + off], [L + off + tick, H, W + off]]);
+    label(t.dimHeight(fmt.int(H)), L + off + size * 2.4, H / 2, W + off);
+    line([[L + off, 0, 0], [L + off, 0, W]]);
+    line([[L + off - tick, 0, 0], [L + off + tick, 0, 0]]);
+    line([[L + off - tick, 0, W], [L + off + tick, 0, W]]);
+    label(t.dimWidth(fmt.int(W)), L + off + size * 2.4, size * 0.6, W / 2);
+    line([[0, 0, W + off], [L, 0, W + off]]);
+    label(t.dimLength(fmt.int(L)), L / 2, size * 0.6, W + off + size * 0.8);
+    const cabL = Math.min(190, Math.max(90, L * 0.2));
+    label(t.cab, -cabL / 2 - 25, Math.min(H * 0.92, 230) + size * 1.1, W / 2, true);
+    label(t.door, L + off, H + size * 1.1, W / 2, true);
   }
 
   frameCamera() {
     if (!this.truck) return;
     const { length: L, width: W, height: H } = this.truck;
-    const span = Math.max(L, W * 2, H * 2);
-    this.camera.position.set(L * 1.05, H + span * 0.55, W + span * 0.75);
-    this.controls.target.set(L / 2, H / 3, W / 2);
+    // The view takes in the cab in front of the box as well as the door labels behind it.
+    const cabL = Math.min(190, Math.max(90, L * 0.2)) + 25;
+    const span = Math.max(L + cabL, W * 2, H * 2) * 1.1;
+    const cx = (L - cabL) / 2;
+    this.camera.position.set(cx + span * 0.55, H + span * 0.55, W + span * 0.75);
+    this.controls.target.set(cx, H / 3, W / 2);
     this.controls.update();
     this.needsRender = true;
   }
@@ -222,15 +286,46 @@ export class TruckView {
   }
 }
 
-function clear(group: THREE.Group) {
+function clear(group: THREE.Object3D) {
   for (const child of [...group.children]) {
     group.remove(child);
+    clear(child);
     const obj = child as THREE.Mesh;
     obj.geometry?.dispose();
-    const mat = obj.material as THREE.Material | THREE.Material[] | undefined;
+    const mat = obj.material as (THREE.Material & { map?: THREE.Texture | null }) | THREE.Material[] | undefined;
     if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-    else mat?.dispose();
+    else {
+      mat?.map?.dispose();
+      mat?.dispose();
+    }
   }
+}
+
+/** A text label that always faces the camera, `height` cm tall, on a rounded tag when `bg` is set. */
+function textSprite(text: string, ink: string, bg: string | null, height: number): THREE.Sprite {
+  const px = 64;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  const font = `700 ${px}px system-ui, sans-serif`;
+  ctx.font = font;
+  const pad = px * 0.35;
+  canvas.width = Math.ceil(ctx.measureText(text).width + pad * 2);
+  canvas.height = Math.ceil(px * 1.4);
+  ctx.font = font;
+  if (bg) {
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, canvas.width, canvas.height, px * 0.3);
+    ctx.fill();
+  }
+  ctx.fillStyle = ink;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, pad, canvas.height / 2 + px * 0.04);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+  sprite.scale.set((height * canvas.width) / canvas.height, height, 1);
+  return sprite;
 }
 
 function pushBoxEdges(out: number[], x: number, y: number, z: number, dx: number, dy: number, dz: number) {

@@ -1,10 +1,10 @@
-import { MODEL_ORDER, withDefaults, type ModelId, type PlacedBox, type PlanRequest, type PlanResult, type SearchProgress } from '../engine';
+import { MODEL_ORDER, poseOf, withDefaults, type ModelId, type PlacedBox, type PlanResult, type SearchProgress, type ShipmentRequest, type ShipmentResult } from '../engine';
 import type { WorkerRequest, WorkerResponse } from '../engine/worker';
 import * as repo from '../db/repo';
-import type { Destination, SavedPlan, Sku, TruckType } from '../db/repo';
+import type { Destination, Sku, TruckType, Vehicle } from '../db/repo';
 import { t } from '../i18n/id';
 import { combobox } from './combobox';
-import { fmt, h } from './dom';
+import { confirmDialog, fmt, h } from './dom';
 import { skuColor } from './colors';
 import { TruckView, riskColor, type ColorMode } from './view3d';
 import { printPlan } from './print';
@@ -16,53 +16,85 @@ interface Line {
   qty: number | null;
 }
 
-interface CustomTruck {
-  name: string;
+interface Dims {
   length: number;
   width: number;
   height: number;
 }
 
-/** The truck a plan is made for: a master-data truck, or a one-off size typed on the input screen. */
+/** One truck of the shipment as entered: its type, the inner size used, and its plate number. */
+interface TruckSlot {
+  typeId: number | null;
+  /** Inner size used for planning; starts as the type's size and may be changed (measured, ODOL). */
+  dims: Dims;
+  plateNo: string;
+  /** Added by the calculation because the order needed another truck. */
+  auto: boolean;
+}
+
+/** The truck a plan is made for: a truck type with the size used for this truck. */
 export interface PlanningTruck extends repo.PlanTruck {
   id: number | null;
   type: TruckType | null;
 }
 
-const CUSTOM = 'custom';
+const LABELS_KEY = 'tlo-3d-labels';
+
+const typeDims = (tr: TruckType | null | undefined): Dims => ({ length: tr?.inner_length_cm ?? 0, width: tr?.inner_width_cm ?? 0, height: tr?.inner_height_cm ?? 0 });
+const sameDims = (a: Dims, b: Dims) => a.length === b.length && a.width === b.width && a.height === b.height;
+const hasDims = (d: Dims) => d.length > 0 && d.width > 0 && d.height > 0;
+/** Temporary shipment number for drafts, until the real number is entered. */
+const tempNumber = () => `TMP-${Date.now().toString(36).toUpperCase()}`;
+
+function readLabels(): boolean {
+  try {
+    return localStorage.getItem(LABELS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
 
 export class Planner {
   readonly el: HTMLElement;
-  private reference = '';
+  private shipmentNo = '';
+  /** Draft number given at the first calculation while the shipment number is empty. */
+  private tempNo = '';
+  /** The saved shipment being edited (reopened from the history), if any. */
+  private shipmentId: number | null = null;
+  private note = '';
   private destination: Destination | null = null;
-  private truckId: number | typeof CUSTOM | null = null;
-  private custom: CustomTruck = { name: '', length: 0, width: 0, height: 0 };
   private lines: Line[] = [];
-  private results: Partial<Record<ModelId, PlanResult>> = {};
+  private slots: TruckSlot[] = [];
+  private results: Partial<Record<ModelId, ShipmentResult>> = {};
   private progress: Partial<Record<ModelId, SearchProgress>> = {};
   private stale = false;
   private selected: ModelId = 'standard';
+  private truckIdx = 0;
   private colorMode: ColorMode = 'sku';
   private upToTier = 0;
   private showPerTier = false;
   private detailsOpen = false;
   private picked: PlacedBox | null = null;
+  private labels = readLabels();
   private trucks: TruckType[] = [];
+  private vehicles: Vehicle[] = [];
   private view: TruckView | null = null;
   private workers: Worker[] = [];
 
   // Mount points that re-render independently.
-  private refInput = h('input', { type: 'text', id: 'reference', placeholder: t.referencePlaceholder });
+  private shipmentInput = h('input', { type: 'text', id: 'shipment-no', placeholder: t.shipmentNoPlaceholder, autocomplete: 'off' });
+  private shipmentHint = h('div', { class: 'shipment-hint' });
+  private noteInput = h('input', { type: 'text', id: 'note', placeholder: t.notePlaceholder });
   private destCard = h('div', { class: 'dest-card' });
-  private truckSelect = h('select', { id: 'truck-select' });
-  private truckNote = h('p', { class: 'hint' });
-  private customBox = h('details', { class: 'custom-truck' });
   private linesBox = h('div', { class: 'lines' });
+  private trucksBox = h('div', { class: 'truck-slots' });
+  private plateList = h('datalist', { id: 'plate-list' });
   private runBtn = h('button', { class: 'btn primary run', type: 'button' }, t.run);
   private message = h('p', { class: 'message', role: 'status' });
-  private modelCards = h('div', { class: 'model-cards' });
+  private stageHead = h('div', { class: 'stage-head' });
   private stageTools = h('div', { class: 'stage-tools' });
   private canvasHost = h('div', { class: 'canvas-host' });
+  private helper = h('div', { class: 'stage-helper' });
   private pickedBox = h('div', { class: 'picked', hidden: true });
   private summaryBox = h('div', { class: 'summary-body' });
   private detailsBox = h('section', { class: 'details panel' });
@@ -87,6 +119,7 @@ export class Planner {
       this.detailsBox,
       this.loading,
     );
+    this.slots = [this.newSlot(null)];
     this.reloadTrucks();
     this.runBtn.addEventListener('click', () => this.run());
     this.renderAll();
@@ -95,8 +128,10 @@ export class Planner {
   /** Called after master data changes so dropdowns and searches see the new rows. */
   reloadTrucks() {
     this.trucks = repo.listTrucks();
-    if (typeof this.truckId === 'number' && !this.trucks.some((x) => x.id === this.truckId)) this.truckId = null;
-    this.renderTruckSelect();
+    this.vehicles = repo.listVehicles();
+    for (const s of this.slots) if (s.typeId != null && !this.trucks.some((x) => x.id === s.typeId)) s.typeId = null;
+    this.plateList.replaceChildren(...this.vehicles.map((v) => h('option', { value: v.plate_no }, this.typeOf(v.truck_type_id) ? repo.truckLabel(this.typeOf(v.truck_type_id)!) : '')));
+    this.renderTrucks();
   }
 
   mount3d() {
@@ -106,6 +141,7 @@ export class Planner {
     }
     if (this.view) return;
     this.view = new TruckView(this.canvasHost);
+    this.view.setLabels(this.labels);
     this.view.onPick = (box) => {
       this.picked = box;
       this.renderPicked();
@@ -117,16 +153,23 @@ export class Planner {
     this.view?.refreshTheme();
   }
 
+  private typeOf(id: number | null | undefined) {
+    return id == null ? null : this.trucks.find((x) => x.id === id) ?? null;
+  }
+
+  private newSlot(typeId: number | null): TruckSlot {
+    return { typeId, dims: typeDims(this.typeOf(typeId)), plateNo: '', auto: false };
+  }
+
   // ---------- Input panel ----------
 
   private inputPanel(): HTMLElement {
-    this.refInput.addEventListener('input', () => (this.reference = this.refInput.value.trim()));
-    this.truckSelect.addEventListener('change', () => {
-      const v = this.truckSelect.value;
-      this.truckId = v === CUSTOM ? CUSTOM : Number(v) || null;
-      if (this.truckId === CUSTOM) this.customBox.open = true;
-      this.truckChanged();
+    this.shipmentInput.addEventListener('input', () => {
+      this.shipmentNo = this.shipmentInput.value.trim();
+      this.renderShipmentHint();
+      this.renderHelper();
     });
+    this.noteInput.addEventListener('input', () => (this.note = this.noteInput.value.trim()));
 
     const sku = combobox<Sku>({
       id: 'sku-search',
@@ -151,22 +194,20 @@ export class Planner {
       h('p', { class: 'hint' }, t.aiInputHint),
     );
 
-    this.renderCustomBox();
     return h(
       'section',
       { class: 'input panel' },
-      h('h2', {}, t.inputTitle),
+      h('h2', {}, t.shipmentTitle),
+      h('label', { for: 'shipment-no' }, t.shipmentNo),
+      this.shipmentInput,
+      this.shipmentHint,
       h('label', { for: 'dest-search' }, t.destination),
       this.destCombo.el,
       this.destCard,
-      h('label', { for: 'truck-select' }, t.truck),
-      this.truckSelect,
-      this.truckNote,
-      this.customBox,
       h(
         'div',
         { class: 'label-row' },
-        h('label', { for: 'sku-search' }, t.skuLines),
+        h('label', { for: 'sku-search' }, t.productsTitle),
         h(
           'span',
           { class: 'label-actions' },
@@ -177,61 +218,132 @@ export class Planner {
       sku.el,
       h('p', { class: 'hint' }, t.qtyHint),
       this.linesBox,
-      h('label', { for: 'reference' }, t.reference),
-      this.refInput,
+      h('div', { class: 'label-row' }, h('span', { class: 'label' }, t.trucksTitle)),
+      h('p', { class: 'hint' }, t.trucksHint),
+      this.trucksBox,
+      this.plateList,
+      h('label', { for: 'note' }, t.noteLabel),
+      this.noteInput,
       this.runBtn,
       this.message,
       ai,
     );
   }
 
-  private renderCustomBox() {
-    const num = (key: 'length' | 'width' | 'height', label: string) => {
-      const input = h('input', { type: 'number', min: 1, step: 'any', inputmode: 'decimal', value: this.custom[key] || '', 'aria-label': label });
-      input.addEventListener('input', () => (this.custom[key] = Number(input.value) || 0));
-      return h('label', {}, label, input);
-    };
-    const name = h('input', { type: 'text', value: this.custom.name, placeholder: 'mis. Tronton ODOL B 1234' });
-    name.addEventListener('input', () => (this.custom.name = name.value.trim()));
-    const keep = h('input', { type: 'checkbox' });
-    const apply = async () => {
-      if (!(this.custom.length > 0 && this.custom.width > 0 && this.custom.height > 0)) return this.say(t.truckNoDims);
-      if (keep.checked) {
-        const label = this.custom.name || `${t.customTruckLabel} ${fmt.dims(this.custom.length, this.custom.width, this.custom.height)}`;
-        const id = await repo.saveTruck({
-          code: `ODOL-${Date.now().toString(36).toUpperCase()}`,
-          name: label,
-          variant: null,
-          body_type: 'box',
-          est_volume_min: null,
-          est_volume_max: null,
-          inner_length_cm: this.custom.length,
-          inner_width_cm: this.custom.width,
-          inner_height_cm: this.custom.height,
-          dims_estimated: 0,
-          is_template: 1,
-          notes: null,
-        });
-        this.reloadTrucks();
-        this.truckId = id;
-        this.say(t.templateSaved);
-      } else this.truckId = CUSTOM;
-      this.renderTruckSelect();
-      this.truckChanged();
-    };
-    this.customBox.replaceChildren(
-      h('summary', {}, t.customTruck),
-      h('p', { class: 'hint' }, t.customTruckHint),
-      h('div', { class: 'dims-grid' }, num('length', t.lengthCm), num('width', t.widthCm), num('height', t.heightCm)),
-      h('label', {}, t.customName, name),
-      h('label', { class: 'check' }, keep, ` ${t.saveAsTemplate}`),
-      h('button', { class: 'btn small', type: 'button', onclick: apply }, t.useCustom),
+  private renderShipmentHint() {
+    if (this.shipmentNo) {
+      this.shipmentHint.replaceChildren();
+      return;
+    }
+    this.shipmentHint.replaceChildren(
+      h('div', { class: 'mini-helper' }, h('strong', {}, `ⓘ ${t.shipmentEmpty}`), h('span', {}, this.tempNo ? `${t.draftNo(this.tempNo)}. ${t.shipmentDraftHint}` : t.shipmentEmptyHint)),
     );
+  }
+
+  /** Truck cards: plate number, type and inner size of each truck in the shipment. */
+  private renderTrucks() {
+    const max = this.destination ? repo.maxTruckFor(this.destination.id) : null;
+    const result = this.selectedResult();
+    const option = (tr: TruckType, selected: boolean) => {
+      const vol = tr.est_volume_max ? ` · ${fmt.d1(tr.est_volume_max)} m³` : '';
+      return h('option', { value: tr.id, selected }, `${repo.truckLabel(tr)}${tr.is_template ? '' : vol}${max?.id === tr.id ? ` ✓ ${t.listedForDest}` : ''}`);
+    };
+    const cards = this.slots.map((slot, i) => {
+      const type = this.typeOf(slot.typeId);
+      const plan = result?.trucks[i];
+      const unused = !!result && !this.stale && !plan;
+      const plate = h('input', { type: 'text', list: 'plate-list', value: slot.plateNo, placeholder: t.platePlaceholder, autocomplete: 'off', 'aria-label': `${t.plateNo} ${t.truckN(i + 1)}` });
+      plate.addEventListener('change', () => this.setPlate(i, plate.value));
+      const standard = this.trucks.filter((x) => !x.is_template);
+      const templates = this.trucks.filter((x) => x.is_template);
+      const select = h(
+        'select',
+        { 'aria-label': `${t.truckType} ${t.truckN(i + 1)}` },
+        h('option', { value: '' }, t.noType),
+        ...standard.map((tr) => option(tr, tr.id === slot.typeId)),
+        ...(templates.length ? [h('optgroup', { label: t.isTemplate }, ...templates.map((tr) => option(tr, tr.id === slot.typeId)))] : []),
+      );
+      select.addEventListener('change', () => {
+        slot.typeId = Number(select.value) || null;
+        slot.auto = false;
+        const d = typeDims(this.typeOf(slot.typeId));
+        if (hasDims(d) || slot.typeId != null) slot.dims = d;
+        this.truckChanged();
+      });
+      const dim = (key: keyof Dims, label: string) => {
+        const input = h('input', { type: 'number', min: 1, step: 'any', inputmode: 'decimal', value: slot.dims[key] || '', 'aria-label': `${label} ${t.truckN(i + 1)}` });
+        input.addEventListener('change', () => {
+          slot.dims = { ...slot.dims, [key]: Number(input.value.replace(',', '.')) || 0 };
+          slot.auto = false;
+          this.truckChanged();
+        });
+        return h('label', {}, label, input);
+      };
+      const edited = !!type && hasDims(typeDims(type)) && !sameDims(slot.dims, typeDims(type));
+      const known = slot.plateNo ? this.vehicles.find((v) => v.plate_no === slot.plateNo) : null;
+      const notes: (HTMLElement | null)[] = [];
+      // A hint is always shown under the plate, so typing a plate does not move the run button under the pointer.
+      const kt = this.typeOf(known?.truck_type_id);
+      notes.push(
+        h('p', { class: 'hint' }, known ? t.plateKnown(kt ? repo.truckLabel(kt) : t.noTypeShort, fmt.dims(known.inner_length_cm, known.inner_width_cm, known.inner_height_cm)) : slot.plateNo ? t.plateNew : t.plateEmpty),
+      );
+      if (!hasDims(slot.dims)) notes.push(h('p', { class: 'hint warn' }, type ? t.truckNoDims : t.truckDefaultHint));
+      if (max && type && repo.truckSize(type) > repo.truckSize(max)) notes.push(h('p', { class: 'hint warn' }, `⚠ ${t.overMax} (${repo.truckLabel(max)}).`));
+      return h(
+        'div',
+        { class: `truck-card${unused ? ' unused' : ''}${i === this.truckIdx && plan ? ' on' : ''}` },
+        h(
+          'div',
+          { class: 'tc-head' },
+          h('strong', {}, t.truckN(i + 1)),
+          slot.auto ? h('span', { class: 'tag' }, t.autoTruck) : null,
+          plan ? h('span', { class: 'muted small' }, `${fmt.int(plan.totalCartons)} ${t.cartons}`) : unused ? h('span', { class: 'muted small' }, t.truckUnused) : null,
+          h('span', { class: 'spacer' }),
+          i > 0 ? h('button', { class: 'icon', type: 'button', title: t.removeTruck, 'aria-label': `${t.removeTruck} ${i + 1}`, onclick: () => this.removeSlot(i) }, '×') : null,
+        ),
+        h('label', {}, t.plateNo, plate),
+        h('label', {}, t.truckType, select),
+        h('div', { class: 'dims-head' }, h('span', {}, t.innerSize), edited ? h('button', { class: 'link-btn', type: 'button', onclick: () => ((slot.dims = typeDims(type)), this.truckChanged()) }, t.sizeReset) : null),
+        h('div', { class: 'dims-grid' }, dim('length', t.lengthShort), dim('width', t.widthShort), dim('height', t.heightShort)),
+        edited ? h('p', { class: 'hint' }, h('span', { class: 'tag warn' }, t.sizeEdited), ` ${t.sizeEditedHint}`) : null,
+        ...notes,
+      );
+    });
+    this.trucksBox.replaceChildren(
+      ...cards,
+      h('button', { class: 'btn ghost small add-truck', type: 'button', onclick: () => this.addSlot() }, t.addTruck),
+    );
+  }
+
+  /** A known plate number brings its truck type and last size. */
+  private setPlate(i: number, raw: string) {
+    const slot = this.slots[i];
+    slot.plateNo = repo.normalizePlate(raw);
+    if (slot.plateNo) slot.auto = false;
+    const v = slot.plateNo ? this.vehicles.find((x) => x.plate_no === slot.plateNo) : null;
+    if (v) {
+      if (v.truck_type_id != null && this.typeOf(v.truck_type_id)) slot.typeId = v.truck_type_id;
+      const d = { length: v.inner_length_cm ?? 0, width: v.inner_width_cm ?? 0, height: v.inner_height_cm ?? 0 };
+      slot.dims = hasDims(d) ? d : typeDims(this.typeOf(slot.typeId));
+      this.truckChanged();
+    } else this.renderTrucks();
+  }
+
+  private addSlot() {
+    const last = this.slots[this.slots.length - 1];
+    this.slots.push({ ...this.newSlot(last?.typeId ?? null), dims: last ? { ...last.dims } : { length: 0, width: 0, height: 0 } });
+    this.truckChanged();
+  }
+
+  private removeSlot(i: number) {
+    this.slots.splice(i, 1);
+    this.truckIdx = Math.min(this.truckIdx, this.slots.length - 1);
+    this.truckChanged();
   }
 
   private truckChanged() {
     this.markStale();
-    this.renderTruckNote();
+    this.renderTrucks();
     this.update3d(true);
     this.renderSummary();
     this.renderDetails();
@@ -240,7 +352,8 @@ export class Planner {
   private setDestination(d: Destination) {
     this.destination = d;
     const max = repo.maxTruckFor(d.id);
-    if (max) this.truckId = max.id;
+    // Trucks not tied to a plate number or a typed size follow the destination's maximum truck.
+    if (max) for (const s of this.slots) if (!s.plateNo && (s.typeId == null || sameDims(s.dims, typeDims(this.typeOf(s.typeId))))) Object.assign(s, { typeId: max.id, dims: typeDims(max) });
     this.markStale();
     this.renderAll();
     this.update3d(true);
@@ -252,6 +365,7 @@ export class Planner {
     else this.lines.push({ sku: s, qty });
     this.markStale();
     this.renderLines();
+    this.renderHelper();
   }
 
   /** After a SKU is edited, every line using it plans with the new size. */
@@ -262,7 +376,7 @@ export class Planner {
   }
 
   private pasteDialog() {
-    const area = h('textarea', { rows: 8, placeholder: 'DUM-001\t180\nDUM-003\t' });
+    const area = h('textarea', { rows: 8, placeholder: '69921603\t180\n69920671\t' });
     const result = h('p', { class: 'hint' });
     const dialog = h('dialog', { class: 'form-dialog' });
     const add = () => {
@@ -273,7 +387,7 @@ export class Planner {
         if (!code) continue;
         const s = repo.skuByCode(code);
         if (!s) {
-          if (!/^(no|kode|sap|material)/i.test(code)) missing.push(code);
+          if (!/^(no|kode|sap|material|sku)/i.test(code)) missing.push(code);
           continue;
         }
         const q = parseInt((qtyText ?? '').replace(/\./g, ''), 10);
@@ -298,57 +412,16 @@ export class Planner {
 
   private markStale() {
     if (Object.keys(this.results).length) this.stale = true;
-    this.renderModelCards();
+    this.renderStageHead();
+    this.renderHelper();
   }
 
-  private renderTruckSelect() {
-    const max = this.destination ? repo.maxTruckFor(this.destination.id) : null;
-    const option = (tr: TruckType) => {
-      const vol = tr.est_volume_max ? ` · ${fmt.d1(tr.est_volume_max)} m³` : '';
-      const dims = repo.truckHasDims(tr) ? ` · ${fmt.dims(tr.inner_length_cm, tr.inner_width_cm, tr.inner_height_cm)} cm` : '';
-      return h('option', { value: tr.id, selected: tr.id === this.truckId }, `${repo.truckLabel(tr)}${tr.is_template ? dims : `${vol}${dims}`}${max?.id === tr.id ? ` ✓ ${t.listedForDest}` : ''}`);
-    };
-    const standard = this.trucks.filter((x) => !x.is_template);
-    const templates = this.trucks.filter((x) => x.is_template);
-    this.truckSelect.replaceChildren(
-      h('option', { value: '' }, '—'),
-      ...standard.map(option),
-      ...(templates.length ? [h('optgroup', { label: t.isTemplate }, ...templates.map(option))] : []),
-      h('option', { value: CUSTOM, selected: this.truckId === CUSTOM }, `${t.customTruck}…`),
-    );
-    this.renderTruckNote();
-  }
-
-  private currentTruck(): PlanningTruck | null {
-    if (this.truckId === CUSTOM) {
-      const c = this.custom;
-      if (!(c.length > 0 && c.width > 0 && c.height > 0)) return null;
-      return { id: null, type: null, name: c.name || t.customTruckLabel, length: c.length, width: c.width, height: c.height };
-    }
-    const tr = this.trucks.find((x) => x.id === this.truckId);
-    if (!tr) return null;
-    return { id: tr.id, type: tr, name: repo.truckLabel(tr), ...repo.toEngineTruck(tr) };
-  }
-
-  private renderTruckNote() {
-    const tr = this.trucks.find((x) => x.id === this.truckId);
-    const notes: string[] = [];
-    let warn = false;
-    if (this.truckId === CUSTOM) notes.push(t.customTruckHint);
-    else if (!tr) notes.push(t.truckDefaultHint);
-    else {
-      if (!repo.truckHasDims(tr)) {
-        notes.push(t.truckNoDims);
-        warn = true;
-      }
-      const max = this.destination ? repo.maxTruckFor(this.destination.id) : null;
-      if (max && repo.truckSize(tr) > repo.truckSize(max)) {
-        notes.push(`⚠ ${t.overMax} (${repo.truckLabel(max)}).`);
-        warn = true;
-      }
-    }
-    this.truckNote.textContent = notes.join(' ');
-    this.truckNote.classList.toggle('warn', warn);
+  /** The truck used for slot i: its type with the size entered for it. */
+  private slotTruck(i: number): PlanningTruck | null {
+    const slot = this.slots[i];
+    if (!slot || !hasDims(slot.dims)) return null;
+    const type = this.typeOf(slot.typeId);
+    return { id: type?.id ?? null, type, name: type ? repo.truckLabel(type) : t.customTruckLabel, ...slot.dims };
   }
 
   private renderLines() {
@@ -419,19 +492,26 @@ export class Planner {
     this.lines.splice(i, 1);
     this.markStale();
     this.renderLines();
+    this.renderHelper();
   }
 
   // ---------- Optimisation ----------
 
   private run() {
-    const tr = this.currentTruck();
-    if (!tr) return this.say(this.truckId === CUSTOM ? t.truckNoDims : t.needTruck);
-    if (!(tr.length && tr.width && tr.height)) return this.say(t.truckNoDims);
     if (!this.lines.length) return this.say(t.needLines);
+    // Trucks the last calculation added (and nobody changed) are worked out again.
+    this.slots = this.slots.filter((s, i) => i === 0 || !s.auto);
+    const trucks: PlanningTruck[] = [];
+    for (let i = 0; i < this.slots.length; i++) {
+      const tr = this.slotTruck(i);
+      if (!tr) return this.say(t.needTruckN(i + 1));
+      trucks.push(tr);
+    }
     this.say('');
+    if (!this.shipmentNo && !this.tempNo) this.tempNo = tempNumber();
     const rules = repo.loadRules();
     const base = {
-      truck: { length: tr.length, width: tr.width, height: tr.height },
+      trucks: trucks.map((tr) => ({ length: tr.length, width: tr.width, height: tr.height })),
       lines: this.lines.map((l) => ({ sku: repo.toEngineSku(l.sku), qty: l.qty })),
     };
     this.cancel();
@@ -439,10 +519,13 @@ export class Planner {
     this.progress = {};
     this.stale = false;
     this.upToTier = 0;
+    this.truckIdx = 0;
     this.picked = null;
     this.runBtn.disabled = true;
     this.runBtn.textContent = t.running;
-    this.renderModelCards();
+    this.renderShipmentHint();
+    this.renderStageHead();
+    this.renderTrucks();
     this.renderLoading();
     // One worker per model, so the three searches run side by side.
     for (const model of MODEL_ORDER) {
@@ -454,7 +537,7 @@ export class Planner {
         else if (msg.type === 'result') {
           this.results[msg.result.model] = msg.result;
           worker.terminate();
-          this.renderModelCards();
+          this.renderStageHead();
           if (msg.result.model === this.selected) this.showSelected();
         } else {
           this.say(msg.message);
@@ -465,7 +548,7 @@ export class Planner {
         this.renderLoading();
         if (MODEL_ORDER.every((m) => this.results[m] || this.progress[m]?.fraction === 1)) this.finishRun();
       };
-      const req: PlanRequest = { ...base, rules: rules[model] };
+      const req: ShipmentRequest = { ...base, rules: rules[model] };
       worker.postMessage({ model, req } satisfies WorkerRequest);
     }
   }
@@ -475,7 +558,6 @@ export class Planner {
     this.runBtn.disabled = false;
     this.runBtn.textContent = t.run;
     this.loading.hidden = true;
-    this.renderModelCards();
     this.showSelected();
   }
 
@@ -488,14 +570,13 @@ export class Planner {
   }
 
   private renderLoading() {
-    const tr = this.currentTruck();
     this.loading.hidden = false;
     this.loading.replaceChildren(
       h(
         'section',
         { class: 'loading-card', role: 'dialog', 'aria-label': t.loadingTitle },
         h('h3', {}, t.loadingTitle),
-        h('p', { class: 'muted' }, t.loadingSub(tr?.name ?? '', this.lines.length)),
+        h('p', { class: 'muted' }, t.loadingSub(this.shipmentNo || this.tempNo, this.lines.length)),
         ...MODEL_ORDER.map((m) => {
           const r = this.results[m];
           const p = this.progress[m];
@@ -503,7 +584,7 @@ export class Planner {
           return h(
             'div',
             { class: 'lp-row' },
-            h('div', { class: 'lp-head' }, h('strong', {}, t.models[m]), h('span', { class: 'mono' }, r ? t.loadingDone(r.totalCartons) : `${pct}%`)),
+            h('div', { class: 'lp-head' }, h('strong', {}, t.models[m]), h('span', { class: 'mono' }, r ? t.loadingDone(r.totalCartons, r.trucks.length) : `${t.truckN((p?.truck ?? 0) + 1)} · ${pct}%`)),
             h('div', { class: 'lp-bar' }, h('span', { class: r ? 'done' : '', style: `width:${pct}%` })),
             h('div', { class: 'hint' }, r ? t.plansEvaluated(r.plansEvaluated, r.elapsedMs) : p ? t.loadingBest(p.evaluated, p.bestCartons) : ''),
           );
@@ -517,79 +598,133 @@ export class Planner {
     this.message.textContent = text;
   }
 
-  private selectedPlan(): PlanResult | null {
+  private selectedResult(): ShipmentResult | null {
     return this.stale ? null : this.results[this.selected] ?? null;
+  }
+
+  private selectedPlan(): PlanResult | null {
+    return this.selectedResult()?.trucks[this.truckIdx] ?? null;
   }
 
   private selectModel(m: ModelId) {
     this.selected = m;
     this.upToTier = 0;
     this.picked = null;
-    this.renderModelCards();
     this.showSelected();
   }
 
+  private selectTruck(i: number) {
+    this.truckIdx = i;
+    this.upToTier = 0;
+    this.picked = null;
+    this.update3d(true);
+    this.showSelected();
+  }
+
+  /** Adds truck cards for the trucks the chosen model needed beyond the ones entered. */
+  private extendSlots() {
+    const n = this.selectedResult()?.trucks.length ?? 0;
+    while (this.slots.length < n) {
+      const last = this.slots[this.slots.length - 1];
+      this.slots.push({ typeId: last.typeId, dims: { ...last.dims }, plateNo: '', auto: true });
+    }
+    this.truckIdx = Math.max(0, Math.min(this.truckIdx, n - 1));
+  }
+
   private showSelected() {
-    this.update3d(false);
+    this.extendSlots();
+    this.update3d(true);
+    this.renderStageHead();
     this.renderStageTools();
+    this.renderTrucks();
     this.renderPicked();
     this.renderSummary();
     this.renderDetails();
+    this.renderHelper();
   }
 
-  // ---------- Stage: model cards + 3D ----------
+  // ---------- Stage: model selector, truck tabs, 3D ----------
 
   private stagePanel(): HTMLElement {
     return h(
       'section',
       { class: 'stage panel' },
-      this.modelCards,
-      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.pickedBox),
+      this.stageHead,
+      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.helper, this.pickedBox),
       this.stageTools,
       h('p', { class: 'hint' }, t.viewHint),
     );
   }
 
-  private renderModelCards() {
-    const { results, stale } = this;
+  /** The model selector (with each model's trucks and cartons) and one tab per truck. */
+  private renderStageHead() {
     const running = this.workers.length > 0;
-    if (!Object.keys(results).length && !running) {
-      this.modelCards.replaceChildren(h('p', { class: 'empty-state' }, t.emptyState));
+    const select = h(
+      'select',
+      { id: 'model-select', 'aria-label': t.modelLabel },
+      ...MODEL_ORDER.map((m) => {
+        const r = this.results[m];
+        const text = r && !this.stale ? t.modelOption(t.models[m], r.trucks.length, fmt.int(r.totalCartons)) : running && !r ? t.modelRunning(t.models[m]) : t.models[m];
+        return h('option', { value: m, selected: m === this.selected }, text);
+      }),
+    );
+    select.addEventListener('change', () => this.selectModel(select.value as ModelId));
+    const result = this.selectedResult();
+    const tabs = result
+      ? h(
+          'div',
+          { class: 'truck-tabs', role: 'tablist', 'aria-label': t.trucksTitle },
+          ...result.trucks.map((p, i) =>
+            h(
+              'button',
+              { type: 'button', role: 'tab', class: i === this.truckIdx ? 'on' : '', 'aria-selected': String(i === this.truckIdx), onclick: () => this.selectTruck(i) },
+              h('strong', {}, t.truckN(i + 1)),
+              this.slots[i]?.plateNo ? h('span', { class: 'mono' }, this.slots[i].plateNo) : null,
+              h('span', { class: 'muted' }, `${fmt.int(p.totalCartons)} ${t.cartonsShort}`),
+              p.stability?.risky ? h('span', { class: 'tab-warn', title: t.stabilityRisk(p.stability.risky) }, '⚠') : null,
+            ),
+          ),
+        )
+      : null;
+    this.stageHead.replaceChildren(
+      ...[
+        h('div', { class: 'model-pick' }, h('label', { for: 'model-select' }, t.modelLabel), select, h('span', { class: 'hint' }, t.modelTagline[this.selected])),
+        this.stale ? h('p', { class: 'stale-note' }, t.staleNote) : null,
+        tabs,
+      ].filter((x) => x != null) as HTMLElement[],
+    );
+  }
+
+  /** Mini helper on the empty 3D view: what is still missing before a plan can be calculated. */
+  private renderHelper() {
+    if (this.selectedPlan()) {
+      this.helper.hidden = true;
       return;
     }
-    const ranked = MODEL_ORDER.filter((m) => results[m]).sort((a, b) => results[b]!.totalCartons - results[a]!.totalCartons);
-    const rank = (m: ModelId) => {
-      const r = results[m]!;
-      const better = ranked.filter((x) => results[x]!.totalCartons > r.totalCartons).length;
-      return better === 0 ? t.rankFirst : t.rankNth(better + 1);
-    };
-    this.modelCards.replaceChildren(
-      ...(stale ? [h('p', { class: 'stale-note' }, t.staleNote)] : []),
-      ...MODEL_ORDER.map((m) => {
-        const r = results[m];
-        const on = m === this.selected;
-        return h(
-          'button',
-          { type: 'button', class: `model-card${on ? ' selected' : ''}${stale ? ' stale' : ''}`, 'aria-pressed': String(on), disabled: !r, onclick: () => this.selectModel(m) },
-          h('div', { class: 'mc-head' }, h('span', { class: 'mc-name' }, t.models[m]), r ? h('span', { class: `rank${rank(m) === t.rankFirst ? ' first' : ''}` }, rank(m)) : null),
-          h('div', { class: 'mc-tag' }, t.modelTagline[m]),
-          r
-            ? [
-                h('div', { class: 'mc-num' }, fmt.int(r.totalCartons), h('small', {}, ` ${t.cartons}`)),
-                h('div', { class: 'mc-meta' }, `${fmt.pct(r.volumeUtilization)} · ${fmt.int(r.tiers.length)} ${r.segmentTiers ? t.segments : t.tiers}`),
-                stabilityBadge(r),
-                h('div', { class: 'mc-sel' }, on ? t.chosen : t.pick),
-              ]
-            : h('div', { class: 'mc-wait' }, h('span', { class: 'spinner' }), t.running),
-        );
-      }),
+    const steps: [string, boolean][] = [
+      [t.helperSteps[0], !!this.shipmentNo],
+      [t.helperSteps[1], !!this.destination],
+      [t.helperSteps[2], this.lines.length > 0],
+      [t.helperSteps[3], this.slots.every((s) => hasDims(s.dims))],
+      [t.helperSteps[4], false],
+    ];
+    this.helper.hidden = false;
+    this.helper.replaceChildren(
+      h('strong', {}, this.shipmentNo ? t.helperReady(this.shipmentNo) : `ⓘ ${t.shipmentEmpty}`),
+      h('ol', {}, ...steps.map(([label, done]) => h('li', { class: done ? 'done' : '' }, done ? '✓ ' : '', label))),
+      h('p', {}, this.shipmentNo ? t.helperRun : t.shipmentEmptyHint),
     );
   }
 
   private renderStageTools() {
     const plan = this.selectedPlan();
+    const labels = h(
+      'button',
+      { class: `btn ghost small${this.labels ? ' on' : ''}`, type: 'button', 'aria-pressed': String(this.labels), onclick: () => this.toggleLabels() },
+      this.labels ? `☑ ${t.showLabels}` : `☐ ${t.showLabels}`,
+    );
     if (!plan) {
-      this.stageTools.replaceChildren();
+      this.stageTools.replaceChildren(labels, h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.view?.frameCamera() }, t.resetView));
       return;
     }
     const n = plan.tiers.length;
@@ -607,19 +742,32 @@ export class Planner {
       ),
     );
     const current = this.upToTier || n;
+    const word = plan.segmentTiers ? t.segments : t.tierNo;
     this.stageTools.replaceChildren(
       mode,
       h(
         'div',
         { class: 'stepper' },
         h('button', { class: 'icon', type: 'button', 'aria-label': t.prevTier, title: t.prevTier, disabled: current <= 1, onclick: () => set(current - 1) }, '‹'),
-        h('span', { class: 'mono step-label' }, this.upToTier ? t.upTo(this.upToTier, n) : t.allTiers(n)),
+        h('span', { class: 'mono step-label' }, this.upToTier ? t.upTo(word, this.upToTier, n) : t.allTiers(word, n)),
         h('button', { class: 'icon', type: 'button', 'aria-label': t.nextTier, title: t.nextTier, disabled: !this.upToTier, onclick: () => set(current + 1) }, '›'),
       ),
       h('button', { class: 'btn small', type: 'button', onclick: () => set(1) }, t.stepThrough),
       h('button', { class: 'btn small', type: 'button', disabled: !this.upToTier, onclick: () => set(n) }, t.all),
+      labels,
       h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.view?.frameCamera() }, t.resetView),
     );
+  }
+
+  private toggleLabels() {
+    this.labels = !this.labels;
+    try {
+      localStorage.setItem(LABELS_KEY, this.labels ? 'on' : 'off');
+    } catch {
+      // Storage blocked: the choice lasts for this page.
+    }
+    this.view?.setLabels(this.labels);
+    this.renderStageTools();
   }
 
   private renderPicked() {
@@ -631,19 +779,20 @@ export class Planner {
     }
     const line = this.lines.find((l) => l.sku.id === b.skuId);
     const below = plan.boxes.filter((o) => o.tier === b.tier && o.z < b.z && o.y < b.y + b.dy && b.y < o.y + o.dy && o.x < b.x + b.dx && b.x < o.x + o.dx).length;
+    const pose = line ? poseOf(b, repo.plannedDims(line.sku)) : null;
     this.pickedBox.hidden = false;
     this.pickedBox.replaceChildren(
       h('strong', {}, t.picked),
       h('div', {}, line ? `${line.sku.code} · ${line.sku.name}` : String(b.skuId)),
       h('div', { class: 'muted' }, t.pickedWhere(b.tier, below + 1, plan.segmentTiers)),
       h('div', { class: 'muted mono' }, `${fmt.dims(b.dx, b.dy, b.dz)} cm`),
-      ...[riskText(plan, b)].filter((x): x is HTMLDivElement => !!x),
+      ...[pose ? h('div', {}, `${t.pose} ${pose}: ${t.poses[pose]}`) : null, riskText(plan, b)].filter((x): x is HTMLDivElement => !!x),
     );
   }
 
   private update3d(truckChanged: boolean) {
     if (!this.view) return;
-    const tr = this.currentTruck();
+    const tr = this.slotTruck(this.truckIdx);
     if (truckChanged) this.view.setTruck(tr ? { length: tr.length, width: tr.width, height: tr.height } : null);
     this.view.setPlan(this.selectedPlan(), this.colorMode, this.lines.map((l) => l.sku.id), this.upToTier, this.upToTier);
   }
@@ -659,39 +808,53 @@ export class Planner {
   // ---------- Summary ----------
 
   private renderSummary() {
-    const tr = this.currentTruck();
+    const tr = this.slotTruck(this.truckIdx);
     const d = this.destination;
+    const result = this.selectedResult();
     const plan = this.selectedPlan();
     const skuOf = (id: number) => this.lines.find((l) => l.sku.id === id)?.sku;
     const skuIdx = (id: number) => this.lines.findIndex((l) => l.sku.id === id);
     const out: (HTMLElement | null)[] = [];
 
-    if (plan) {
+    if (result) {
+      const unplaced = Object.entries(result.unplaced);
       out.push(
         h(
           'div',
+          { class: 'shipment-kpis' },
+          h('div', { class: 'kpi big' }, h('span', { class: 'kpi-label' }, `${t.shipmentNo} ${this.shipmentNo || this.tempNo}`), h('span', { class: 'kpi-value' }, fmt.int(result.totalCartons)), h('span', { class: 'kpi-sub' }, `${t.cartons} · ${t.models[result.model]}`)),
+          h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.trucksUsed), h('span', { class: 'kpi-value' }, fmt.int(result.trucks.length))),
+        ),
+        unplaced.length
+          ? h(
+              'div',
+              { class: 'alert unplaced' },
+              h('strong', {}, t.shipmentUnplaced),
+              ...unplaced.map(([id, n]) => h('div', {}, `${skuOf(Number(id))?.code ?? id} · ${skuOf(Number(id))?.name ?? ''}: `, h('strong', {}, fmt.int(n)), ` ${t.cartons}`)),
+            )
+          : null,
+        h(
+          'div',
+          { class: 'actions' },
+          h('button', { class: 'btn primary', type: 'button', onclick: () => this.print() }, t.printShipment(result.trucks.length)),
+          h('button', { class: 'btn', type: 'button', onclick: () => void this.save() }, t.savePlan),
+        ),
+      );
+    }
+
+    if (plan) {
+      out.push(
+        h('h3', { class: 'summary-sub' }, t.thisTruck(this.truckIdx + 1, result!.trucks.length), this.slots[this.truckIdx]?.plateNo ? h('span', { class: 'mono' }, ` · ${this.slots[this.truckIdx].plateNo}`) : null),
+        h(
+          'div',
           { class: 'kpis' },
-          h('div', { class: 'kpi big' }, h('span', { class: 'kpi-label' }, t.totalCartons), h('span', { class: 'kpi-value' }, fmt.int(plan.totalCartons)), h('span', { class: 'kpi-sub' }, t.models[plan.model])),
+          h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.totalCartons), h('span', { class: 'kpi-value' }, fmt.int(plan.totalCartons))),
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, plan.segmentTiers ? t.segmentCount : t.tierCount), h('span', { class: 'kpi-value' }, fmt.int(plan.tiers.length))),
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.utilization), h('span', { class: 'kpi-value' }, fmt.pct(plan.volumeUtilization))),
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.usedLength), h('span', { class: 'kpi-value' }, fmt.m(plan.usedLength))),
-          h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.totalWeight), h('span', { class: 'kpi-value' }, `${fmt.int(plan.totalWeight)} kg`)),
         ),
       );
       out.push(stabilityBlock(plan, this.colorMode === 'risk'));
-      const unplaced = Object.entries(plan.unplaced);
-      if (unplaced.length)
-        out.push(
-          h(
-            'div',
-            { class: 'alert unplaced' },
-            h('strong', {}, t.unplaced),
-            ...unplaced.map(([id, n]) => h('div', {}, `${skuOf(Number(id))?.code ?? id} · ${skuOf(Number(id))?.name ?? ''}: `, h('strong', {}, fmt.int(n)), ` ${t.cartons}`)),
-          ),
-        );
-      out.push(
-        h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => this.print() }, t.print), h('button', { class: 'btn', type: 'button', onclick: () => this.save() }, t.savePlan)),
-      );
     }
 
     if (tr)
@@ -701,8 +864,10 @@ export class Planner {
           { class: 'facts' },
           h('dt', {}, t.truckInfo),
           h('dd', {}, h('strong', {}, tr.name)),
+          h('dt', {}, t.plateNo),
+          h('dd', {}, this.slots[this.truckIdx]?.plateNo || '–'),
           h('dt', {}, t.innerDims),
-          h('dd', {}, `${fmt.dims(tr.length, tr.width, tr.height)} cm`, tr.type?.dims_estimated ? h('span', { class: 'tag warn' }, t.estimated) : null),
+          h('dd', {}, `${fmt.dims(tr.length, tr.width, tr.height)} cm`, tr.type?.dims_estimated && sameDims(tr, typeDims(tr.type)) ? h('span', { class: 'tag warn' }, t.estimated) : null),
           h('dt', {}, t.calcVolume),
           h('dd', {}, `${fmt.d1((tr.length * tr.width * tr.height) / 1e6)} m³`),
         ),
@@ -759,27 +924,63 @@ export class Planner {
     if (!this.summaryBox.childElementCount) this.summaryBox.append(h('p', { class: 'muted' }, t.emptyState));
   }
 
+  /** The trucks of the chosen result with the truck and plate number each was planned for. */
+  private plannedTrucks() {
+    const result = this.selectedResult();
+    if (!result) return [];
+    return result.trucks.map((plan, i) => ({ plan, truck: this.slotTruck(i)!, plateNo: this.slots[i]?.plateNo || null, seq: i + 1 }));
+  }
+
+  /** Saving needs a shipment number (or a draft number) and asks before saving trucks without a plate number. */
   private async save() {
-    const plan = this.selectedPlan();
-    const tr = this.currentTruck();
-    if (!plan || !tr) return;
-    await repo.saveShipmentPlan(
-      this.reference || null,
-      this.destination?.id ?? null,
-      tr.id,
-      { name: tr.name, length: tr.length, width: tr.width, height: tr.height },
-      this.lines.map((l) => ({ sku: l.sku, qty: l.qty })),
-      plan,
-    );
-    this.say(`${t.saved} ✓`);
+    const result = this.selectedResult();
+    if (!result) return;
+    let no = this.shipmentNo;
+    let isTemp = false;
+    if (!no) {
+      const answer = await askShipmentNo(this.tempNo || tempNumber());
+      if (!answer) return;
+      if (answer.draft) {
+        no = this.tempNo = answer.no;
+        isTemp = true;
+      } else {
+        no = this.shipmentNo = answer.no;
+        this.shipmentInput.value = no;
+        this.renderShipmentHint();
+      }
+    }
+    const trucks = this.plannedTrucks();
+    const missing = trucks.filter((x) => !x.plateNo).map((x) => t.truckN(x.seq));
+    if (missing.length && !(await confirmDialog(t.saveNoPlate(missing.join(', ')), t.saveAnyway, t.cancel, false))) return;
+    const existing = repo.shipmentByNo(no);
+    if (existing && existing.id !== this.shipmentId && !(await confirmDialog(t.replaceShipment(no), t.replace, t.cancel))) return;
+    this.shipmentId = await repo.saveShipment({
+      shipmentId: this.shipmentId,
+      shipmentNo: no,
+      isTemp,
+      destinationId: this.destination?.id ?? null,
+      note: this.note || null,
+      lines: this.lines.map((l) => ({ sku: l.sku, qty: l.qty })),
+      trucks: trucks.map((x) => ({ truckTypeId: x.truck.id, plateNo: x.plateNo, truck: { name: x.truck.name, length: x.truck.length, width: x.truck.width, height: x.truck.height }, plan: x.plan })),
+    });
+    this.reloadTrucks();
+    this.renderHelper();
+    this.say(`${isTemp ? t.savedDraft(no) : t.savedShipment(no, trucks.length)} ✓`);
     this.onSaved();
   }
 
   private print() {
-    const plan = this.selectedPlan();
-    const tr = this.currentTruck();
-    if (!plan || !tr) return;
-    printPlan({ plan, truck: tr, destination: this.destination, reference: this.reference, skus: this.lines.map((l) => l.sku), snapshot: this.view?.snapshot() ?? null });
+    const trucks = this.plannedTrucks();
+    if (!trucks.length) return;
+    printPlan({
+      trucks,
+      shipmentNo: this.shipmentNo || this.tempNo,
+      draft: !this.shipmentNo,
+      destination: this.destination,
+      note: this.note,
+      skus: this.lines.map((l) => l.sku),
+      snapshot: this.view ? { seq: this.truckIdx + 1, url: this.view.snapshot() } : null,
+    });
   }
 
   // ---------- Details ----------
@@ -796,8 +997,9 @@ export class Planner {
       this.detailsBox.replaceChildren(head);
       return;
     }
+    const result = this.selectedResult();
     const plan = this.selectedPlan();
-    const tr = this.currentTruck();
+    const tr = this.slotTruck(this.truckIdx);
     const d = this.destination;
     const lines = this.lines;
     const skuIdx = (id: number) => lines.findIndex((l) => l.sku.id === id);
@@ -835,6 +1037,8 @@ export class Planner {
         )
       : h('p', { class: 'muted' }, t.emptyState);
 
+    // Per SKU: ordered, planned on each truck, and left over.
+    const truckCount = result?.trucks.length ?? 0;
     const skuTable = lines.length
       ? h(
           'div',
@@ -842,12 +1046,23 @@ export class Planner {
           h(
             'table',
             {},
-            h('thead', {}, h('tr', {}, ...[t.code, t.name, t.plannedDims, t.volume, t.safeLayers, t.weight, t.requested, t.planned, t.remaining].map((x, i) => h('th', { class: i >= 3 ? 'num' : '' }, x)))),
+            h(
+              'thead',
+              {},
+              h(
+                'tr',
+                {},
+                ...[t.code, t.name, t.plannedDims, t.volume, t.safeLayers, t.requested].map((x, i) => h('th', { class: i >= 3 ? 'num' : '' }, x)),
+                ...Array.from({ length: truckCount }, (_, i) => h('th', { class: 'num' }, t.truckN(i + 1))),
+                h('th', { class: 'num' }, t.remaining),
+              ),
+            ),
             h(
               'tbody',
               {},
               ...lines.map((l, i) => {
-                const loaded = plan?.loaded[l.sku.id] ?? 0;
+                const per = (result?.trucks ?? []).map((p) => p.loaded[l.sku.id] ?? 0);
+                const loaded = per.reduce((a, b) => a + b, 0);
                 const rest = l.qty != null ? Math.max(0, l.qty - loaded) : null;
                 return h(
                   'tr',
@@ -857,10 +1072,9 @@ export class Planner {
                   h('td', {}, fmt.dims(...repo.plannedDims(l.sku))),
                   h('td', { class: 'num' }, fmt.d3(l.sku.volume_m3)),
                   h('td', { class: 'num' }, fmt.int(l.sku.safe_stack_layers)),
-                  h('td', { class: 'num' }, l.sku.weight_kg != null ? fmt.d1(l.sku.weight_kg) : '–'),
                   h('td', { class: 'num' }, l.qty != null ? fmt.int(l.qty) : t.qtyMax),
-                  h('td', { class: 'num' }, plan ? fmt.int(loaded) : '–'),
-                  h('td', { class: `num${rest ? ' bad' : ''}` }, plan && rest != null ? fmt.int(rest) : '–'),
+                  ...per.map((n) => h('td', { class: 'num' }, fmt.int(n))),
+                  h('td', { class: `num${rest ? ' bad' : ''}` }, result && rest != null ? fmt.int(rest) : '–'),
                 );
               }),
             ),
@@ -874,8 +1088,10 @@ export class Planner {
           { class: 'facts wide' },
           h('dt', {}, t.name),
           h('dd', {}, tr.name),
+          h('dt', {}, t.plateNo),
+          h('dd', {}, this.slots[this.truckIdx]?.plateNo || '–'),
           h('dt', {}, t.innerDims),
-          h('dd', {}, `${fmt.dims(tr.length, tr.width, tr.height)} cm`, tr.type?.dims_estimated ? h('span', { class: 'tag warn' }, t.estimated) : null),
+          h('dd', {}, `${fmt.dims(tr.length, tr.width, tr.height)} cm`, tr.type?.dims_estimated && sameDims(tr, typeDims(tr.type)) ? h('span', { class: 'tag warn' }, t.estimated) : null),
           h('dt', {}, t.estVolume),
           h('dd', {}, tr.type?.est_volume_max ? `${fmt.d1(tr.type.est_volume_max)} m³` : '–'),
           h('dt', {}, t.calcVolume),
@@ -941,76 +1157,106 @@ export class Planner {
   }
 
   private renderAll() {
+    this.renderShipmentHint();
     this.renderDestCard();
-    this.renderTruckSelect();
+    this.renderTrucks();
     this.renderLines();
-    this.renderModelCards();
+    this.renderStageHead();
     this.renderStageTools();
     this.renderSummary();
     this.renderDetails();
+    this.renderHelper();
   }
 
-  /** Reopens a saved plan: its inputs and the saved result for its model. */
-  loadSaved(saved: SavedPlan) {
+  /** Reopens a saved shipment: its order lines, every truck with its plate number, and the saved plans. */
+  loadShipment(shipmentId: number, truckSeq = 1) {
+    const plans = repo.shipmentPlans(shipmentId);
+    if (!plans.length) return;
     this.cancel();
-    const result = repo.planResult(saved.id);
-    const truck = JSON.parse(saved.truck_json) as repo.PlanTruck;
-    this.destination = saved.destination_id ? repo.listDestinations().find((d) => d.id === saved.destination_id) ?? null : null;
-    if (saved.truck_type_id && this.trucks.some((x) => x.id === saved.truck_type_id)) this.truckId = saved.truck_type_id;
-    else {
-      this.truckId = CUSTOM;
-      this.custom = { ...truck };
-      this.renderCustomBox();
-    }
-    // The SKUs exactly as planned, so a reopened plan matches its saved result.
-    this.lines = repo.shipmentLines(saved.shipment_id);
-    this.reference = saved.reference ?? '';
-    this.refInput.value = this.reference;
+    const first = plans[0];
+    this.shipmentId = shipmentId;
+    this.shipmentNo = first.is_temp ? '' : first.shipment_no ?? '';
+    this.tempNo = first.is_temp ? first.shipment_no ?? '' : '';
+    this.shipmentInput.value = this.shipmentNo;
+    this.note = first.reference ?? '';
+    this.noteInput.value = this.note;
+    this.destination = first.destination_id ? repo.listDestinations().find((d) => d.id === first.destination_id) ?? null : null;
     this.destCombo.setText(this.destination ? `${this.destination.customer} – ${this.destination.city}` : '');
-    this.results = result ? { [result.model]: result } : {};
-    this.selected = saved.model;
+    // The SKUs exactly as planned, so a reopened plan matches its saved result.
+    this.lines = repo.shipmentLines(shipmentId);
+    this.slots = plans.map((p) => {
+      const truck = JSON.parse(p.truck_json) as repo.PlanTruck;
+      const typeId = p.truck_type_id && this.typeOf(p.truck_type_id) ? p.truck_type_id : null;
+      return { typeId, dims: { length: truck.length, width: truck.width, height: truck.height }, plateNo: p.plate_no ?? '', auto: false };
+    });
+    const results = plans.map((p) => repo.planResult(p.id)).filter((r): r is PlanResult => !!r);
+    const unplaced: Record<number, number> = {};
+    for (const l of this.lines) {
+      const loaded = results.reduce((s, r) => s + (r.loaded[l.sku.id] ?? 0), 0);
+      if (l.qty != null && l.qty > loaded) unplaced[l.sku.id] = l.qty - loaded;
+    }
+    this.selected = first.model;
+    this.results =
+      results.length === plans.length
+        ? { [first.model]: { model: first.model, trucks: results, unplaced, totalCartons: results.reduce((s, r) => s + r.totalCartons, 0), plansEvaluated: 0, elapsedMs: 0 } }
+        : {};
     this.stale = false;
+    this.truckIdx = Math.max(0, Math.min(plans.length - 1, truckSeq - 1));
     this.upToTier = 0;
     this.picked = null;
+    this.say('');
     this.renderAll();
     this.update3d(true);
   }
+}
 
-  /** Fills the form with a sample shipment so first-time viewers see a plan immediately. */
-  loadExample() {
-    const dest = repo.searchDestinations('UNIRAMA DUTA NIAGA, PT (GD)', 1)[0] ?? repo.listDestinations()[0];
-    if (dest) {
-      this.destination = dest;
-      this.truckId = repo.maxTruckFor(dest.id)?.id ?? null;
-    }
-    const skus = repo.listSkus();
-    const pick = (code: string) => skus.find((s) => s.code === code);
-    this.lines = (
-      [
-        ['DUM-001', 180],
-        ['DUM-007', 120],
-        ['DUM-004', 150],
-        ['DUM-003', null],
-      ] as [string, number | null][]
-    )
-      .map(([code, qty]) => ({ sku: pick(code)!, qty }))
-      .filter((l) => l.sku);
-    this.destCombo.setText(dest ? `${dest.customer} – ${dest.city}` : '');
-    this.renderAll();
-    this.update3d(true);
-    this.run();
-  }
+/** Asks for the shipment number before saving; or saves the plan as a draft under its temporary number. */
+function askShipmentNo(tempNo: string): Promise<{ no: string; draft: boolean } | null> {
+  return new Promise((resolve) => {
+    const dialog = h('dialog', { class: 'form-dialog narrow' });
+    const input = h('input', { type: 'text', placeholder: t.shipmentNoPlaceholder, 'aria-label': t.shipmentNo });
+    const error = h('p', { class: 'alert', hidden: true });
+    let answer: { no: string; draft: boolean } | null = null;
+    const done = (a: { no: string; draft: boolean } | null) => {
+      answer = a;
+      dialog.close();
+    };
+    const submit = () => {
+      const no = input.value.trim();
+      if (!no) {
+        error.textContent = t.required(t.shipmentNo);
+        error.hidden = false;
+        return;
+      }
+      done({ no, draft: false });
+    };
+    input.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), submit()));
+    dialog.append(
+      h('h3', {}, t.saveNeedsNo),
+      h('p', { class: 'hint' }, t.saveNeedsNoHint),
+      h('label', { class: 'stack' }, t.shipmentNo, input),
+      error,
+      h(
+        'div',
+        { class: 'actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => done(null) }, t.cancel),
+        h('button', { class: 'btn', type: 'button', onclick: () => done({ no: tempNo, draft: true }) }, t.saveAsDraft(tempNo)),
+        h('button', { class: 'btn primary', type: 'button', onclick: submit }, t.save),
+      ),
+    );
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      resolve(answer);
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    input.focus();
+  });
 }
 
 function personalTag(s: Sku) {
   if (!s.personal) return null;
   return h('span', { class: 'tag personal', title: t.personalNote }, s.personal === 'new' ? t.personalNew : t.personalEdited);
-}
-
-function stabilityBadge(r: PlanResult) {
-  const s = r.stability;
-  if (!s) return null;
-  return h('div', { class: `mc-risk ${s.risky ? 'bad' : 'ok'}` }, s.risky ? `⚠ ${t.stabilityRisk(s.risky)}` : `✓ ${t.stabilityOk}`);
 }
 
 function stabilityBlock(plan: PlanResult, legend: boolean) {

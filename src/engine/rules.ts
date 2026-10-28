@@ -55,7 +55,9 @@ export interface ModelRules {
 
 export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
   free: {
-    tiers: false,
+    // Bebas builds tiers too (one carton deep, across the width), so loaders get a count and a
+    // picture per tier; rotation and mixing stay free.
+    tiers: true,
     lineOrder: false,
     interlock: false,
     interlockMinSupport: 0.6,

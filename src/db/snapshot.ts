@@ -5,7 +5,7 @@ export type SqlParam = string | number | null;
 export type Row = Record<string, SqlParam>;
 
 /** Every table, parents before children, so inserts in this order satisfy the foreign keys. */
-export const TABLES = ['meta', 'truck_types', 'destinations', 'destination_trucks', 'skus', 'shipments', 'shipment_lines', 'load_plans', 'model_settings'] as const;
+export const TABLES = ['meta', 'truck_types', 'trucks', 'destinations', 'destination_trucks', 'skus', 'shipments', 'shipment_lines', 'load_plans', 'model_settings'] as const;
 export type TableName = (typeof TABLES)[number];
 export type Snapshot = Partial<Record<TableName, Row[]>>;
 
