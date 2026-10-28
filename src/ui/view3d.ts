@@ -120,7 +120,7 @@ export class TruckView {
     add(floor, L / 2, 0, W / 2);
     add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(L, H, W)), new THREE.LineBasicMaterial({ color: lineColor })), L / 2, H / 2, W / 2);
 
-    // Truck head in front of x = 0: cab body, a dark windscreen facing forward, bumper and wheels.
+    // Truck head in front of x = 0: cab body, a dark windscreen facing forward and a bumper.
     const cabL = Math.min(190, Math.max(90, L * 0.2));
     const cabH = Math.min(H * 0.92, 230);
     const cabX = -cabL / 2 - 25;
@@ -131,14 +131,6 @@ export class TruckView {
     add(new THREE.Mesh(new THREE.BoxGeometry(14, 22, W), mat(0x2a3138)), cabX - cabL / 2 - 4, 12, W / 2);
     // Chassis under the cargo floor joins the head to the box, so they read as one truck.
     add(new THREE.Mesh(new THREE.BoxGeometry(L + cabL + 25, 14, W * 0.5), mat(0x2a3138)), (L - cabL - 25) / 2, -9, W / 2);
-    const r = Math.min(48, Math.max(30, H * 0.18));
-    const wheel = () => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 26, 24), mat(0x1f2328, { roughness: 0.9 }));
-      m.rotation.x = Math.PI / 2;
-      return m;
-    };
-    const axles = [cabX, ...(L > 600 ? [L - r * 3.4, L - r * 1.2] : [L - r * 1.4])];
-    for (const x of axles) for (const z of [W * 0.12, W * 0.88]) add(wheel(), x, -r * 0.55, z);
 
     // Rear doors, swung open against the sides: the open end is the door.
     for (const [hinge, angle] of [
