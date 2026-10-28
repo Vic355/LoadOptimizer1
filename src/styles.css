@@ -526,3 +526,21 @@ label.stack { display: flex; flex-direction: column; gap: 4px; font-weight: 600;
 .p-pose-item b { font-size: 11pt; }
 .p-pose { flex: none; }
 .p-pose-hint { color: #333; }
+
+/* Truck fill in the summary: carton volume ÷ truck volume, one bar per truck. */
+.fill-block { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 4px; }
+.fill-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.fill-total { font-size: 0.85rem; }
+.fill-total strong { font-variant-numeric: tabular-nums; }
+.fill-row { display: grid; grid-template-columns: minmax(70px, auto) 1fr auto; grid-template-areas: 'name bar pct' 'sub sub sub'; align-items: center; column-gap: 8px; row-gap: 2px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: var(--surface-2); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fill-row.on { border-color: var(--accent); }
+.fill-row:hover { border-color: var(--line); }
+.fill-row.on:hover { border-color: var(--accent); }
+.fill-name { grid-area: name; font-weight: 600; font-size: 0.85rem; white-space: nowrap; }
+.fill-bar { grid-area: bar; display: block; height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.fill-bar i { display: block; height: 100%; border-radius: 5px; background: var(--good); }
+.fill-bar.mid i { background: var(--accent); }
+.fill-bar.low i { background: var(--bad); }
+.fill-pct { grid-area: pct; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 3.5em; text-align: right; }
+.fill-sub { grid-area: sub; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media print { .fill-block { display: none; } }
