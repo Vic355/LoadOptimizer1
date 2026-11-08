@@ -10,7 +10,10 @@ npm run dev      # local dev server
 npm test         # engine tests (vitest)
 npm run build    # static files in dist/, host anywhere (Cloudflare Pages, intranet IIS/nginx)
 npx wrangler dev # the app with the Worker API and a local D1 database
+npm run build:intranet && npm run start:intranet  # intranet server: same API on a SQLite file (deploy/intranet/)
 ```
+
+System documentation, the engine reference and the intranet migration guide are in [`docs/`](docs/README.md).
 
 ## Shared database (Cloudflare D1)
 
@@ -40,8 +43,9 @@ day per database, so production and PR previews together stay inside the free 10
 | `src/db/repo.ts` | All queries; changes go through `writes.ts` |
 | `src/db/writes.ts`, `snapshot.ts` | Every change as a named operation, run by the Worker on D1 (or locally); table rows as JSON |
 | `src/server/index.ts` | Cloudflare Worker: static files plus `/api` on D1 |
+| `deploy/intranet/` | The same API on Node.js with a SQLite file, plus IIS / nginx / systemd templates |
 | `src/server/assistant.ts`, `public/app-guide.md` | Help assistant (`/api/ask`) and the guide it answers from |
-| `src/engine/` | Packing engine, runs in a Web Worker: `standard.ts` (one SKU per tier), `models.ts` (free and mixed, block building + randomised search), `blocks.ts` (guillotine block builder), `shipment.ts` (a shipment over several trucks), `pose.ts` (carton position A–F for the loader sheet) |
+| `src/engine/` | Packing engine, runs in a Web Worker: `models.ts` (time-boxed randomised search over plans), `tiers.ts` (tier builder with interlocking rows), `blocks.ts` (guillotine block builder), `stability.ts` (tip/slide check), `shipment.ts` (a shipment over several trucks), `pose.ts` (carton position A–F for the loader sheet) |
 | `src/ui/` | Planner screen (shipment input, truck cards, model selector, 3D view, summary, details), master data CRUD, print sheet |
 | `src/i18n/id.ts` | Every user-facing string |
 | `data/destinations.tsv`, `data/skus.tsv` | Raw destination and SAP SKU lists as supplied |

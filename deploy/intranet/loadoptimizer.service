@@ -1,0 +1,19 @@
+# systemd unit for a Linux server. Template: copy to /etc/systemd/system/, adjust the paths and
+# user, then: systemctl daemon-reload && systemctl enable --now loadoptimizer
+[Unit]
+Description=Truck Load Optimizer (intranet)
+After=network.target
+
+[Service]
+Type=simple
+User=loadoptimizer
+WorkingDirectory=/opt/loadoptimizer
+Environment=PORT=8080
+Environment=HOST=127.0.0.1
+Environment=DIST_DIR=/opt/loadoptimizer/dist
+Environment=DB_FILE=/var/lib/loadoptimizer/loadoptimizer.sqlite
+ExecStart=/usr/bin/node /opt/loadoptimizer/build-server/server.js
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

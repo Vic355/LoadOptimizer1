@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:intranet": "npm run build && vite build --ssr deploy/intranet/server.ts --outDir build-server",
     "preview": "vite preview",
+    "start:intranet": "node build-server/server.js",
     "test": "vitest run"
   },
   "dependencies": {
