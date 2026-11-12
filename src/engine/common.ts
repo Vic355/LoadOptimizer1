@@ -33,6 +33,21 @@ export function layerLimit(sku: EngineSku, rules: ModelRules): number {
   return rules.respectSafeStack ? Math.max(1, sku.safeLayers) : Infinity;
 }
 
+/**
+ * Cartons of one SKU that fit a truck on their own, stacked in a plain grid in the best allowed
+ * orientation and within the stack limit. Used to turn a "percent of the load" into cartons.
+ */
+export function gridCapacity(sku: EngineSku, truck: EngineTruck, rules: ModelRules): number {
+  const limit = layerLimit(sku, rules);
+  let best = 0;
+  for (const o of orientations(sku, rules.rotation)) {
+    if (!(o.dx > 0 && o.dy > 0 && o.dz > 0)) continue;
+    const n = Math.floor(truck.length / o.dx) * Math.floor(truck.width / o.dy) * Math.min(Math.floor(truck.height / o.dz), limit);
+    best = Math.max(best, n);
+  }
+  return best;
+}
+
 /** Small deterministic PRNG (mulberry32) so a seed reproduces the same search. */
 export function makeRng(seed: number): () => number {
   let a = seed >>> 0;
