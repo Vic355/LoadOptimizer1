@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, MODEL_ORDER, poseOf, runModel, runShipment, type EngineSku, type ModelId, type PlacedBox, type PlanRequest } from '../src/engine';
 import { parseMaterialDescription, skuFromSap } from '../src/db/material';
 import { SAP_SKU_ROWS } from '../src/db/seed-skus';
-import { supportFraction } from '../src/engine/common';
+import { gridCapacity, supportFraction } from '../src/engine/common';
 import { rowPattern } from '../src/engine/tiers';
 import { checkStability, TIP } from '../src/engine/stability';
 
@@ -263,5 +263,45 @@ describe('SAP material descriptions', () => {
     const parsed = SAP_SKU_ROWS.map((r) => skuFromSap(...r));
     expect(parsed.every((p) => p && p.length_cm > 0 && p.width_cm > 0 && p.height_cm > 0)).toBe(true);
     expect(parsed.filter((p) => p!.issues.some((i) => i !== 'white-kraft')).map((p) => p!.code)).toHaveLength(10);
+  });
+});
+
+describe('percent of the load', () => {
+  it('grid capacity counts one SKU in its best orientation within the stack limit', () => {
+    // 940/60 = 15, 240/40 = 6, 200/35 = 5 layers (limit 6) -> 450; turned: 940/40 = 23, 240/60 = 4 -> 460.
+    expect(gridCapacity(sku(1, 60, 40, 35), truck, DEFAULT_RULES.standard)).toBe(460);
+    expect(gridCapacity(sku(1, 60, 40, 35, { safeLayers: 2 }), truck, DEFAULT_RULES.standard)).toBe(184);
+  });
+
+  for (const model of MODEL_ORDER) {
+    it(`${model}: a 60/40 split of what fits stays on one truck`, () => {
+      const a = sku(1, 60, 40, 35);
+      const b = sku(2, 45, 30, 28, { safeLayers: 5, group: 'B' });
+      const qty = (s: EngineSku, pct: number) => Math.floor((pct / 100) * gridCapacity(s, truck, DEFAULT_RULES.standard));
+      const r = runShipment(model, { trucks: [truck], lines: [{ sku: a, qty: qty(a, 60) }, { sku: b, qty: qty(b, 40) }], rules: DEFAULT_RULES[model], timeBudgetMs: 200 });
+      expect(r.trucks.length).toBe(1);
+      expect(r.unplaced).toEqual({});
+    });
+  }
+
+  for (const model of MODEL_ORDER) {
+    it(`${model}: share lines asked for more than fits are scaled down to stay on the trucks given`, () => {
+      const a = sku(1, 60, 40, 35);
+      const b = sku(2, 45, 30, 28, { safeLayers: 5, group: 'B' });
+      const r = runShipment(model, { trucks: [truck], lines: [{ sku: a, qty: 400, fitShare: true }, { sku: b, qty: 500, fitShare: true }], rules: DEFAULT_RULES[model], timeBudgetMs: 150 });
+      expect(r.trucks.length).toBe(1);
+      expect(r.unplaced).toEqual({});
+      expect(r.requested![1]).toBeLessThan(400);
+      expect(r.trucks[0].loaded[1]).toBe(r.requested![1]);
+      expect(r.trucks[0].loaded[2] ?? 0).toBe(r.requested![2]);
+    });
+  }
+
+  it('fixed lines next to share lines still spill onto more trucks', () => {
+    const a = sku(1, 60, 40, 35);
+    const b = sku(2, 45, 30, 28, { safeLayers: 5, group: 'B' });
+    const r = runShipment('standard', { trucks: [truck], lines: [{ sku: a, qty: 900 }, { sku: b, qty: 50, fitShare: true }], rules: DEFAULT_RULES.standard, timeBudgetMs: 150 });
+    expect(r.trucks.length).toBeGreaterThan(1);
+    expect(r.trucks.reduce((s, p) => s + (p.loaded[1] ?? 0), 0)).toBe(900);
   });
 });

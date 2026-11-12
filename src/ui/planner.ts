@@ -1,4 +1,4 @@
-import { MODEL_ORDER, poseOf, withDefaults, type ModelId, type PlacedBox, type PlanResult, type SearchProgress, type ShipmentRequest, type ShipmentResult } from '../engine';
+import { MODEL_ORDER, gridCapacity, poseOf, withDefaults, type ModelId, type PlacedBox, type PlanResult, type SearchProgress, type ShipmentRequest, type ShipmentResult } from '../engine';
 import type { WorkerRequest, WorkerResponse } from '../engine/worker';
 import * as repo from '../db/repo';
 import type { Destination, Sku, TruckType, Vehicle } from '../db/repo';
@@ -15,11 +15,19 @@ interface Line {
   sku: Sku;
   /** Cartons asked for; null fills the space left (maks). For a percent line it is worked out from `pct`. */
   qty: number | null;
-  /** Set when the amount is entered as a percentage of the trucks' inner space instead of cartons. */
+  /** Set when the amount is entered as a percentage of the load (the cartons that fit) instead of cartons. */
   pct?: number | null;
   /** The row shows the percent field (kept while the field is still empty). */
   pctMode?: boolean;
+  /**
+   * Order quantity the percentage is taken from. Empty: the percentage is a share of what fits on the
+   * trucks entered and never spills. Filled: that many cartons are sent, on more trucks if needed.
+   */
+  orderQty?: number | null;
 }
+
+/** A percent line without an order quantity: a share of what fits, kept to the trucks entered. */
+const isShare = (l: Line) => !!l.pctMode && l.pct != null && !l.orderQty;
 
 interface Dims {
   length: number;
@@ -495,22 +503,31 @@ export class Planner {
     return { id: type?.id ?? null, type, name: type ? repo.truckLabel(type) : t.customTruckLabel, ...slot.dims };
   }
 
-  /** Inner space (cm³) of the trucks entered for the shipment, which a percent line is a share of. */
-  private plannedSpace(): number {
-    return this.slots.filter((s, i) => (i === 0 || !s.auto) && hasDims(s.dims)).reduce((sum, s) => sum + s.dims.length * s.dims.width * s.dims.height, 0);
+  /**
+   * Cartons of a SKU that make up `pct` percent of the load: the share of what fits if the trucks
+   * entered held only this SKU (plain grid, Standar rules for turning and stacking). So 60% of A and
+   * 40% of B fill the trucks in a 60/40 split without spilling onto an extra truck.
+   */
+  private cartonsForPct(sku: Sku, pct: number): number | null {
+    const trucks = this.slots.filter((s, i) => (i === 0 || !s.auto) && hasDims(s.dims));
+    if (!trucks.length) return null;
+    const rules = repo.loadRules().standard;
+    const engineSku = repo.toEngineSku(sku);
+    const fits = trucks.reduce((sum, s) => sum + gridCapacity(engineSku, s.dims, rules), 0);
+    if (!fits) return null;
+    return Math.max(1, Math.floor((pct / 100) * fits));
   }
 
-  /** Cartons of a SKU that make up `pct` percent of the trucks' inner space (carton volume against truck volume). */
-  private cartonsForPct(sku: Sku, pct: number): number | null {
-    const [l, w, ht] = repo.plannedDims(sku);
-    const space = this.plannedSpace();
-    if (!space || !(l * w * ht > 0)) return null;
-    return Math.max(1, Math.floor(((pct / 100) * space) / (l * w * ht)));
+  /** Cartons of a percent line: a share of its order quantity, or (no order quantity) of what fits. */
+  private pctQty(l: Line): number | null {
+    if (l.pct == null) return null;
+    if (l.orderQty) return Math.max(1, Math.floor((l.pct / 100) * l.orderQty));
+    return this.cartonsForPct(l.sku, l.pct);
   }
 
   /** Percent lines follow the trucks: their carton count is worked out again from the current truck sizes. */
   private syncPctLines() {
-    for (const l of this.lines) if (l.pctMode) l.qty = l.pct != null ? this.cartonsForPct(l.sku, l.pct) : null;
+    for (const l of this.lines) if (l.pctMode) l.qty = this.pctQty(l);
   }
 
   private renderLines() {
@@ -524,6 +541,7 @@ export class Planner {
       ...this.lines.map((line, i) => {
         const isPct = !!line.pctMode;
         const input = h('input', {
+          class: 'qty-main',
           type: 'number',
           min: isPct ? 0.1 : 1,
           max: isPct ? 100 : undefined,
@@ -535,7 +553,7 @@ export class Planner {
         });
         const note = h('span', { class: 'qty-note' });
         const showNote = () => {
-          note.textContent = !line.pctMode || line.pct == null ? '' : line.qty != null ? t.pctCartons(fmt.int(line.qty)) : t.pctNeedTruck;
+          note.textContent = !line.pctMode || line.pct == null ? '' : line.qty == null ? t.pctNeedTruck : line.orderQty ? t.pctOfOrder(fmt.int(line.qty)) : t.pctCartons(fmt.int(line.qty));
           note.classList.toggle('bad', !!line.pctMode && line.pct != null && line.qty == null);
         };
         showNote();
@@ -544,7 +562,7 @@ export class Planner {
             const v = parseFloat(input.value.replace(',', '.'));
             line.pct = Number.isFinite(v) && v > 0 ? Math.min(100, v) : null;
             if (line.pct != null && String(line.pct) !== input.value) input.value = String(line.pct);
-            line.qty = line.pct != null ? this.cartonsForPct(line.sku, line.pct) : null;
+            line.qty = this.pctQty(line);
           } else {
             const v = parseInt(input.value, 10);
             line.qty = Number.isFinite(v) && v > 0 ? v : null;
@@ -561,12 +579,26 @@ export class Planner {
         unit.addEventListener('click', () => {
           line.pctMode = !line.pctMode;
           line.pct = null;
+          line.orderQty = null;
           line.qty = null;
           this.markStale();
           this.renderLines();
-          this.linesBox.querySelectorAll<HTMLInputElement>('.qty-box input')[i]?.focus();
+          this.linesBox.querySelectorAll<HTMLInputElement>('.qty-main')[i]?.focus();
         });
-        const qty = h('div', { class: 'qty-box' }, h('div', { class: 'qty-field' }, input, unit), note);
+        // In percent mode: an optional order quantity the percentage is taken from.
+        let order: HTMLInputElement | null = null;
+        if (isPct) {
+          order = h('input', { class: 'qty-order', type: 'number', min: 1, step: 1, inputmode: 'numeric', placeholder: t.orderQtyPlaceholder, title: t.orderQtyHint, value: line.orderQty ?? '', 'aria-label': `${t.orderQty} ${line.sku.name}` });
+          order.addEventListener('change', () => {
+            const v = parseInt(order!.value.replace(/\./g, ''), 10);
+            line.orderQty = Number.isFinite(v) && v > 0 ? v : null;
+            line.qty = this.pctQty(line);
+            showNote();
+            this.renderPctTotal();
+            this.markStale();
+          });
+        }
+        const qty = h('div', { class: 'qty-box' }, h('div', { class: 'qty-field' }, input, unit), order, note);
         const s = line.sku;
         const [pl, pw, ph] = repo.plannedDims(s);
         const modified = s.mod_length_cm || s.mod_width_cm || s.mod_height_cm;
@@ -614,7 +646,7 @@ export class Planner {
 
   /** Under the SKU rows: the percentages entered so far, with a warning above 100%. */
   private renderPctTotal() {
-    const pcts = this.lines.filter((l) => l.pctMode && l.pct != null).map((l) => l.pct as number);
+    const pcts = this.lines.filter(isShare).map((l) => l.pct as number);
     const total = pcts.reduce((a, b) => a + b, 0);
     this.pctTotal.hidden = !pcts.length;
     this.pctTotal.classList.toggle('bad', total > 100.0001);
@@ -655,7 +687,7 @@ export class Planner {
     if (pctMissing) return this.say(t.pctNeedTruck);
     const base = {
       trucks: trucks.map((tr) => ({ length: tr.length, width: tr.width, height: tr.height })),
-      lines: this.lines.map((l) => ({ sku: repo.toEngineSku(l.sku), qty: l.qty })),
+      lines: this.lines.map((l) => ({ sku: repo.toEngineSku(l.sku), qty: l.qty, fitShare: isShare(l) || undefined })),
     };
     this.cancel();
     this.results = {};
@@ -1157,7 +1189,8 @@ export class Planner {
       isTemp,
       destinationId: this.destination?.id ?? null,
       note: this.note || null,
-      lines: this.lines.map((l) => ({ sku: l.sku, qty: l.qty })),
+      // Percent lines are saved as the cartons the chosen model planned for them.
+      lines: this.lines.map((l) => ({ sku: l.sku, qty: (isShare(l) ? this.results[this.selected]?.requested?.[l.sku.id] : null) ?? l.qty })),
       trucks: trucks.map((x) => ({ truckTypeId: x.truck.id, plateNo: x.plateNo, truck: { name: x.truck.name, length: x.truck.length, width: x.truck.width, height: x.truck.height }, plan: x.plan })),
     });
     this.reloadTrucks();
@@ -1260,7 +1293,8 @@ export class Planner {
               ...lines.map((l, i) => {
                 const per = (result?.trucks ?? []).map((p) => p.loaded[l.sku.id] ?? 0);
                 const loaded = per.reduce((a, b) => a + b, 0);
-                const rest = l.qty != null ? Math.max(0, l.qty - loaded) : null;
+                const asked = (isShare(l) ? result?.requested?.[l.sku.id] : null) ?? l.qty;
+                const rest = asked != null ? Math.max(0, asked - loaded) : null;
                 return h(
                   'tr',
                   {},
@@ -1269,7 +1303,7 @@ export class Planner {
                   h('td', {}, fmt.dims(...repo.plannedDims(l.sku))),
                   h('td', { class: 'num' }, fmt.d3(l.sku.volume_m3)),
                   h('td', { class: 'num' }, fmt.int(l.sku.safe_stack_layers)),
-                  h('td', { class: 'num' }, l.qty != null ? fmt.int(l.qty) : t.qtyMax, l.pctMode && l.pct != null ? h('span', { class: 'muted' }, ` (${fmt.d1(l.pct)}%)`) : null),
+                  h('td', { class: 'num' }, asked != null ? fmt.int(asked) : t.qtyMax, l.pctMode && l.pct != null ? h('span', { class: 'muted' }, ` (${fmt.d1(l.pct)}%${l.orderQty ? ` × ${fmt.int(l.orderQty)}` : ''})`) : null),
                   ...per.map((n) => h('td', { class: 'num' }, fmt.int(n))),
                   h('td', { class: `num${rest ? ' bad' : ''}` }, result && rest != null ? fmt.int(rest) : '–'),
                 );

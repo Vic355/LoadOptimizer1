@@ -26,6 +26,12 @@ export interface EngineLine {
   sku: EngineSku;
   /** Requested quantity in packs; null means "fill as many as fit". */
   qty: number | null;
+  /**
+   * The quantity is a first estimate of a share of what fits on the trucks given (entered as a
+   * percentage). The shipment scales such lines down until they fit those trucks, so they never
+   * call for an extra truck.
+   */
+  fitShare?: boolean;
 }
 
 export interface EngineTruck {
@@ -131,6 +137,8 @@ export interface ShipmentResult {
   model: ModelId;
   /** One plan per truck, in order. */
   trucks: PlanResult[];
+  /** Quantity planned per SKU: as asked, or for share lines the amount that fits. */
+  requested?: Record<number, number>;
   /** Fixed quantities left after the last truck (none fit, or the truck limit was reached). */
   unplaced: Record<number, number>;
   totalCartons: number;

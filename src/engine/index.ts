@@ -2,6 +2,7 @@ import type { ModelId } from './types';
 
 export * from './types';
 export { runModel } from './models';
+export { gridCapacity } from './common';
 export { runShipment, MAX_TRUCKS } from './shipment';
 export { poseOf, POSES, type Pose } from './pose';
 export { checkStability, TIP, SLIDE, OVERHANG } from './stability';
