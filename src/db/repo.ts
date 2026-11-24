@@ -141,14 +141,18 @@ export const deleteTruck = (id: number) => write('deleteTruck', id);
 
 // ---- Destinations ----
 
-export function searchDestinations(text: string, limit = 12): Destination[] {
+export function searchDestinations(text: string, limit = 12, zone: string | null = null): Destination[] {
   const q = `%${text.trim()}%`;
   return query<Destination>(
-    `SELECT * FROM destinations WHERE customer LIKE ? OR city LIKE ? OR zone LIKE ? OR ship_to_no LIKE ?
-     ORDER BY customer, city LIMIT ?`,
-    [q, q, q, q, limit],
+    `SELECT * FROM destinations WHERE (customer LIKE ? OR city LIKE ? OR zone LIKE ? OR ship_to_no LIKE ?)
+     ${zone ? 'AND zone = ?' : ''} ORDER BY customer, city LIMIT ?`,
+    zone ? [q, q, q, q, zone, limit] : [q, q, q, q, limit],
   );
 }
+
+/** Zones in the destination list, with how many destinations each has. */
+export const listZones = () =>
+  query<{ zone: string; n: number }>("SELECT zone, COUNT(*) AS n FROM destinations WHERE zone IS NOT NULL AND zone <> '' GROUP BY zone ORDER BY zone");
 
 export const listDestinations = () => query<Destination>('SELECT * FROM destinations ORDER BY zone, customer, city');
 

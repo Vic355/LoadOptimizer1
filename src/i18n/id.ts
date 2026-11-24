@@ -1,8 +1,10 @@
-// All user-facing text (Bahasa Indonesia). Keep strings here so an English toggle can be added later.
+// All user-facing text. Bahasa Indonesia is the main language; en.ts has the same keys in English.
+// Add a language: copy en.ts, translate it, and add it to LANGS below.
 import type { ModelId, Pose } from '../engine';
 import type { BodyType, PlanStatus } from '../db/repo';
+import { en } from './en';
 
-export const t = {
+const id = {
   appTitle: 'Optimasi Muat Truk',
   appSubtitle: 'Perencanaan muatan karton per tier',
   prototype: 'Prototipe',
@@ -12,6 +14,13 @@ export const t = {
   loadingDb: 'Memuat database…',
   themeLight: 'Mode terang',
   themeDark: 'Mode gelap',
+  settings: 'Pengaturan',
+  language: 'Bahasa',
+  languageHint: 'Halaman dimuat ulang saat bahasa diganti; isian yang belum disimpan hilang.',
+  themeLabel: 'Tampilan',
+  themeLightOption: 'Terang',
+  themeDarkOption: 'Gelap',
+  languageNames: { id: 'Bahasa Indonesia', en: 'English' },
 
   // Help assistant
   askAi: 'Tanya AI',
@@ -61,6 +70,37 @@ export const t = {
   resetHint: 'Kosongkan perencanaan untuk shipment baru',
   resetConfirm: 'Kosongkan perencanaan ini? Isian dan hasil yang belum disimpan hilang. Rencana di Riwayat Rencana tidak terhapus.',
   shipmentDraftHint: 'Isi nomor shipment sebelum menyimpan, atau simpan sebagai draf.',
+  zoneLabel: 'Zona',
+  zoneAll: 'Semua zona',
+  zoneHint: 'Pilih zona dulu: daftar tujuan lalu hanya berisi tujuan di zona itu.',
+  shipmentKnown: (dest: string) => `Tujuan diisi dari shipment tersimpan: ${dest}. Pilih shipment dari daftar untuk membuka rencananya.`,
+  optionsTitle: 'Opsi perhitungan',
+  groupBySku: 'Kelompokkan per SKU (seperti packer)',
+  groupBySkuHint: 'Berlaku untuk ketiga model. Karton satu SKU disusun di tier yang berurutan; SKU lain hanya berbagi tier tempat satu SKU habis dan SKU berikutnya mulai.',
+  truckTarget: 'Jumlah truk',
+  targetNone: 'Sesuai kebutuhan',
+  targetMin: 'Seminimal mungkin (cari lebih lama)',
+  targetN: (n: number) => `Usahakan ${n} truk (cari lebih lama)`,
+  targetHint: 'Dengan target, model terus mencari (awal acak baru, waktu lebih lama) sampai jumlah truk tercapai atau waktu tambahan habis, paling lama sekitar 5× waktu pencarian.',
+  targetReached: (goal: number) => `✓ Target ${goal} truk tercapai.`,
+  targetImpossible: (goal: number, lb: number) => `Target ${goal} truk tidak mungkin: volume karton yang dipesan saja sudah butuh minimal ${lb} truk.`,
+  targetMissed: (goal: number, got: number, rounds: number) =>
+    `Target ${goal} truk belum tercapai setelah ${rounds} kali pencarian; rencana terbaik butuh ${got} truk. Coba model lain, izinkan karton rebah, atau pakai truk lebih besar.`,
+  moveEarlier: 'Geser ke arah kabin',
+  moveLater: 'Geser ke arah pintu',
+  moveToLabel: (n: number) => `Pindahkan tier ${n} ke posisi`,
+  tierMoved: (from: number, to: number) => `Tier ${from} dipindah ke posisi ${to}. Nomor tier disusun ulang dan stabilitas dicek ulang.`,
+  editedTag: 'Urutan tier diubah',
+  editedHint: 'Urutan tier diubah manual setelah perhitungan. Tekan Urungkan (Ctrl+Z) untuk kembali.',
+  moveTierHint: 'Ubah urutan tier dengan ‹ › atau pilih posisi baru; tier lain ikut bergeser.',
+  tierCountLabels: 'Jumlah per tier',
+  undo: 'Urungkan',
+  redo: 'Ulangi',
+  undoHint: 'Urungkan perubahan terakhir (Ctrl+Z)',
+  redoHint: 'Ulangi perubahan (Ctrl+Y)',
+  undone: 'Perubahan terakhir diurungkan.',
+  redone: 'Perubahan diulangi.',
+  nothingToUndo: 'Tidak ada yang bisa diurungkan.',
   draftNo: (no: string) => `Nomor sementara ${no}`,
   noteLabel: 'Catatan (opsional)',
   notePlaceholder: 'mis. catatan untuk checker',
@@ -158,7 +198,7 @@ export const t = {
   } satisfies Record<ModelId, string>,
   modelTagline: {
     free: 'Geometri bebas untuk muatan terbanyak',
-    standard: 'Tier rapi tanpa celah, SKU dikelompokkan, aman dulu',
+    standard: 'Aman dulu: tier rapi, SKU dikelompokkan',
     mixed: 'Tier Standar, sisa ruang diisi bebas',
   } satisfies Record<ModelId, string>,
   plansEvaluated: (n: number, ms: number) => `${n.toLocaleString('id-ID')} rencana dievaluasi dalam ${(ms / 1000).toLocaleString('id-ID', { maximumFractionDigits: 1 })} dtk`,
@@ -339,6 +379,8 @@ export const t = {
     maxGapCm: 'Celah maksimum dalam tier (cm, 0 = bebas)',
     fillFrom: 'Arah pengisian (lapis bawah dulu)',
     safetyFirst: 'Utamakan keamanan (stabilitas) di atas jumlah karton',
+    levelTiers: 'Aturan tambahan: ratakan tier dengan menyisakan ruang (tier tidak jauh lebih tinggi dari tier sebelumnya, lapis atas hanya penuh)',
+    groupBySku: 'Kelompokkan per SKU',
     searchSeconds: 'Waktu pencarian (detik)',
   },
   fillFromOptions: { cab: 'Dari kabin ke pintu', door: 'Dari pintu ke kabin' },
@@ -366,14 +408,23 @@ export const t = {
     safeOn: 'Tinggi tumpukan aman dipatuhi (yang paling ketat dalam satu tumpukan).',
     safeOff: 'Tinggi tumpukan aman diabaikan; tumpukan sampai atap.',
     heavyOn: 'SKU berat diutamakan di bawah.',
-    gap: (cm: number) => `Pola yang meninggalkan celah lebih dari ${cm} cm tidak dipakai; kolom lurus dipusatkan agar celah terbagi ke dua dinding.`,
-    safetyOn: 'Keamanan diutamakan: rencana dengan karton berisiko kalah dari rencana yang lebih stabil, tier tidak dibuat jauh lebih tinggi dari tier sebelumnya, dan lapis atas hanya dipasang penuh.',
+    gap: (cm: number) => `Pola yang meninggalkan celah lebih dari ${cm} cm tidak dipakai; kolom lurus dipusatkan bila celah di kedua dinding jadi cukup sempit agar karton tidak bergeser.`,
+    safetyOn: 'Keamanan diutamakan: rencana dengan karton berisiko kalah dari rencana yang lebih stabil, dan karton pengisi yang bisa terguling atau bergeser tidak dipasang.',
+    levelOn: 'Aturan tambahan "ratakan tier": tier tidak dibuat jauh lebih tinggi dari tier sebelumnya dan lapis atas hanya dipasang penuh; ini menyisakan ruang kosong.',
+    groupOn: 'Dikelompokkan per SKU: tier satu SKU berurutan; SKU lain hanya berbagi tier tempat satu SKU habis dan SKU berikutnya mulai.',
+    tailOn: 'Sisa karton SKU yang terlalu sedikit untuk satu tier ditaruh di atas tier SKU berikutnya, bukan berdiri sendiri.',
     fillFrom: { cab: 'Diisi dari kabin ke arah pintu, lapis bawah dulu.', door: 'Diisi dari pintu ke arah kabin, lapis bawah dulu (mis. truk wingbox).' },
-    twoSided: 'Tinggi tier dibatasi terhadap tier di depan dan di belakangnya, agar tidak terguling saat rem maupun saat gas; sisa SKU dibagi ke dua tier yang sama tinggi.',
+    twoSided: 'Sisa SKU yang akan membuat tier pendek di samping tier tinggi dibagi ke dua tier yang sama tinggi, agar tidak terguling saat rem maupun saat gas.',
     search: (s: number) => `Mencari selama ${s} detik dan memilih rencana dengan karton terbanyak.`,
   },
 
   // Print
+  layersTitle: 'Susunan per lapis (bawah → atas)',
+  layerWord: 'Lapis',
+  layersOdd: 'ganjil',
+  layersEven: 'genap',
+  behindShort: 'di belakang',
+  wallGaps: (left: string, right: string) => `Celah dinding: kiri ${left} cm · kanan ${right} cm`,
   printTitle: 'Lembar Muat per Tier',
   printPreview: 'Pratinjau lembar muat',
   printHint: 'A4 mendatar. Pilih "Simpan sebagai PDF" di dialog cetak untuk membuat PDF.',
@@ -527,3 +578,31 @@ export const t = {
   isDummy: 'Data dummy',
   required: (label: string) => `${label} wajib diisi.`,
 };
+
+export type Strings = typeof id;
+export type Lang = 'id' | 'en';
+export const LANGS: Record<Lang, Strings> = { id, en };
+const LANG_KEY = 'tlo-lang';
+
+/** Language chosen in Pengaturan (Settings), kept in this browser; Bahasa Indonesia by default. */
+export function currentLang(): Lang {
+  try {
+    const v = globalThis.localStorage?.getItem(LANG_KEY);
+    return v === 'en' ? 'en' : 'id';
+  } catch {
+    return 'id';
+  }
+}
+
+export function setLang(lang: Lang) {
+  try {
+    globalThis.localStorage?.setItem(LANG_KEY, lang);
+  } catch {
+    // Storage blocked: the language stays as it is.
+  }
+}
+
+/** Locale for numbers and dates in the chosen language. */
+export const locale = () => (currentLang() === 'en' ? 'en-GB' : 'id-ID');
+
+export const t: Strings = LANGS[currentLang()];

@@ -28,6 +28,9 @@ export class TruckView {
   /** KABIN / PINTU and the length, width and height of the cargo space; fixed to the truck, outside the load. */
   private labelGroup = new THREE.Group();
   private cargoGroup = new THREE.Group();
+  /** Tier number and carton count above each tier. */
+  private tierGroup = new THREE.Group();
+  private tierCounts = true;
   private resizeObserver: ResizeObserver;
   private frame = 0;
   private plan: PlanResult | null = null;
@@ -54,7 +57,7 @@ export class TruckView {
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
     sun.position.set(-600, 1200, 900);
     this.scene.add(sun);
-    this.scene.add(this.truckGroup, this.labelGroup, this.cargoGroup);
+    this.scene.add(this.truckGroup, this.labelGroup, this.cargoGroup, this.tierGroup);
 
     // A click (not a drag) selects the carton under the pointer.
     let down: { x: number; y: number } | null = null;
@@ -150,6 +153,31 @@ export class TruckView {
     this.needsRender = true;
   }
 
+  /** Shows or hides the carton count above each tier. */
+  setTierCounts(on: boolean) {
+    this.tierCounts = on;
+    this.tierGroup.visible = on;
+    this.needsRender = true;
+  }
+
+  /** A tag above each tier: its number and how many cartons it holds; tags of neighbouring tiers alternate in height. */
+  private drawTierCounts(plan: PlanResult, upToTier: number) {
+    clear(this.tierGroup);
+    if (!this.truck) return;
+    const isDark = document.documentElement.dataset.theme === 'dark';
+    const H = this.truck.height;
+    const W = this.truck.width;
+    for (const tier of plan.tiers) {
+      if (upToTier > 0 && tier.index > upToTier) continue;
+      const size = Math.min(26, Math.max(10, tier.depth * 1.1));
+      const lift = tier.index % 2 === 0 ? size * 1.2 : 0;
+      const sprite = textSprite2(`${plan.segmentTiers ? '' : 'T'}${tier.index}`, fmt.int(tier.total), isDark ? '#12171c' : '#ffffff', isDark ? '#e8c46f' : '#24313d', size);
+      sprite.position.set(tier.x0 + tier.depth / 2, H + size * 0.8 + lift, W / 2);
+      this.tierGroup.add(sprite);
+    }
+    this.tierGroup.visible = this.tierCounts;
+  }
+
   /** Shows or hides the cab, door and size labels. */
   setLabels(on: boolean) {
     this.labelGroup.visible = on;
@@ -213,6 +241,7 @@ export class TruckView {
     if (plan !== this.plan) this.picked = null;
     this.plan = plan;
     clear(this.cargoGroup);
+    clear(this.tierGroup);
     this.mesh = null;
     this.visible = [];
     if (!plan || !plan.boxes.length) {
@@ -250,6 +279,7 @@ export class TruckView {
     const edges = new THREE.BufferGeometry();
     edges.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
     this.cargoGroup.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x1b2630, transparent: true, opacity: 0.35 })));
+    this.drawTierCounts(plan, upToTier);
     this.needsRender = true;
   }
 
@@ -339,4 +369,37 @@ function pushBoxEdges(out: number[], x: number, y: number, z: number, dx: number
   ];
   const e = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7];
   for (const i of e) out.push(c[i][0], c[i][1], c[i][2]);
+}
+
+/** A two-line tag (a small first line, a large second line) that always faces the camera, `height` cm tall. */
+function textSprite2(top: string, main: string, ink: string, bg: string, height: number): THREE.Sprite {
+  const px = 64;
+  const small = px * 0.55;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  const fontMain = `800 ${px}px system-ui, sans-serif`;
+  const fontTop = `600 ${small}px system-ui, sans-serif`;
+  ctx.font = fontMain;
+  const wMain = ctx.measureText(main).width;
+  ctx.font = fontTop;
+  const wTop = ctx.measureText(top).width;
+  const pad = px * 0.3;
+  canvas.width = Math.ceil(Math.max(wMain, wTop) + pad * 2);
+  canvas.height = Math.ceil(small * 1.15 + px * 1.15 + pad);
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, canvas.width, canvas.height, px * 0.25);
+  ctx.fill();
+  ctx.fillStyle = ink;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = fontTop;
+  ctx.fillText(top, canvas.width / 2, pad * 0.5);
+  ctx.font = fontMain;
+  ctx.fillText(main, canvas.width / 2, pad * 0.5 + small * 1.1);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+  sprite.scale.set((height * canvas.width) / canvas.height, height, 1);
+  return sprite;
 }

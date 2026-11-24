@@ -10,6 +10,10 @@ It is a prototype ("Prototipe" tag in the header). Units are centimetres and kil
 
 The header shows where data is kept: "Database bersama" means everyone shares one database online; "Hanya browser ini" means the data lives only in this browser (offline or local copy).
 
+## Settings and language
+
+"⚙ Pengaturan" (Settings, top right) chooses the language (Bahasa Indonesia or English) and the light or dark look. Both are remembered in that browser. Changing the language reloads the page, so unsaved input is lost.
+
 ## Pages
 
 The top bar has three pages: "Perencanaan" (planning), "Riwayat Rencana" (saved plans) and "Data Master" (master data). The ☾/☀ button switches dark and light mode. The lock button switches between "🔒 Pengguna" (normal user) and "🔓 Master" (editing the shared data).
@@ -28,18 +32,23 @@ The top bar has three pages: "Perencanaan" (planning), "Riwayat Rencana" (saved 
 The planner starts empty: the 3D area shows an empty truck with a small checklist of the steps still missing. The left panel is "Input Pengiriman"; the shipment number sits at the top centre, above the 3D view.
 
 1. "Nomor Shipment / SO" (top centre): type the shipment or sales order number. It is the ID of the saved plan. Clicking the field also lists saved shipments (search by number, customer, city or police number); picking one reopens it with all its trucks. The last entry, "✦ Contoh rencana", loads a made-up example shipment (SO-CONTOH-001: three Paseo and Nice SKUs that need two CDD trucks) and calculates it, to try the app. The shipment number comes first: while it is empty, "Input Pengiriman" is locked (greyed out, "🔒 Isi Nomor Shipment / SO …") and a small yellow helper says "Nomor Shipment / SO masih kosong". Typing a number, or picking a saved shipment or the example, unlocks it. Older drafts saved with a temporary number (TMP-…) still open and can be given their real number when saved.
+   - "↶ Urungkan" (Undo) and "↷" (Redo), next to the shipment field, take back or redo the last change: SKU lines and quantities, destination, trucks, a calculation, or a moved tier. Keyboard: Ctrl+Z (Cmd+Z on a Mac) to undo, Ctrl+Y or Ctrl+Shift+Z to redo. Inside a text field Ctrl+Z undoes the typing in that field instead.
+   - Typing a shipment number that was saved before fills in its destination automatically; pick the shipment from the list to open its whole plan. The app has no SAP link, so a new shipment number cannot bring its destination by itself.
    - "↺ Reset" (right of the shipment field) empties the planner for a new shipment after a confirmation. It does not delete anything saved in "Riwayat Rencana"; to delete a saved shipment, use "Riwayat Rencana".
-2. "Tujuan": search by customer, city or zone. Each destination lists the vehicles allowed there; the largest is the maximum truck for that destination.
+2. "Zona" then "Tujuan": pick a zone first (optional); clicking "Tujuan" then lists only that zone's destinations. Or search "Tujuan" by customer, city, zone or ship-to number. Each destination lists the vehicles allowed there; the largest is the maximum truck for that destination.
 3. "Produk (SKU)": search by SAP material number or name and add lines. Leave the quantity empty ("maks") to fill the remaining space with that SKU. Drag rows to change the loading order. "Tempel dari Excel" pastes two columns from Excel: SAP material number and quantity. "+ SKU baru" creates a personal SKU on the spot.
 4. "Truk": one card per truck ("Truk 1", "Truk 2", …). Each card has:
    - "Nomor polisi": the police number (e.g. B 9123 UXY), for every truck, not only ODOL. A known number fills in its truck type and the size last recorded for it ("Terdaftar: …"). A new number is added to the register with its size when the plan is saved.
    - "Jenis truk": filled automatically with the destination's maximum truck. Smaller trucks may be chosen; a larger one shows a warning.
    - "Ukuran dalam (cm)": inner length (P), width (L) and height (T), filled from the truck type. Change them for a measured or ODOL truck; the card then shows "ukuran diubah", and "Pakai ukuran standar" puts the type's size back.
    - "+ Tambah truk" adds a card. If the cartons do not fit in the trucks given, the app adds trucks automatically ("ditambah otomatis") with the type and size of the last truck, up to 30.
-5. Click "Jalankan Optimasi". All three models run in parallel, truck by truck; a longer search usually gives better results. "Batal" stops it.
-6. The "Model" selector above the 3D view shows each model with its number of trucks and cartons (e.g. "Bebas · 3 truk · 770 karton"); pick the one to use. Tabs below it ("Truk 1", "Truk 2", …) switch the 3D view and the summary between trucks.
-7. "Simpan rencana" stores the whole shipment (every truck) in "Riwayat Rencana". Without a shipment number it asks for one or offers "Simpan sebagai draf". If a truck has no police number it asks first ("Simpan tanpa nomor polisi"). Saving again under the same shipment number replaces that shipment's plan after a confirmation.
-8. "Cetak lembar muat (n truk)" opens the A4 landscape print preview for all trucks; choose "Simpan sebagai PDF" in the print dialog to get a PDF.
+5. "Opsi perhitungan" (calculation options, remembered on the device, apply to all three models):
+   - "Kelompokkan per SKU (seperti packer)": on by default. A SKU's tiers follow one another; other SKUs only share the tier where one SKU ends and the next begins, like packers load.
+   - "Jumlah truk": "Sesuai kebutuhan" (as needed, the default), "Seminimal mungkin" (as few as possible) or "Usahakan n truk" (aim for 1 to 5 trucks). With a target the models keep searching with new random starts and more time, up to about 5× the search time, and keep the plan with the fewest trucks. The summary says whether the target was reached; if the ordered cartons' volume alone needs more trucks, it says the target is impossible.
+6. Click "Jalankan Optimasi". All three models run in parallel, truck by truck; a longer search usually gives better results. "Batal" stops it.
+7. The "Model" selector above the 3D view shows each model with its number of trucks and cartons (e.g. "Bebas · 3 truk · 770 karton"); pick the one to use. Tabs below it ("Truk 1", "Truk 2", …) switch the 3D view and the summary between trucks.
+8. "Simpan rencana" stores the whole shipment (every truck) in "Riwayat Rencana". Without a shipment number it asks for one or offers "Simpan sebagai draf". If a truck has no police number it asks first ("Simpan tanpa nomor polisi"). Saving again under the same shipment number replaces that shipment's plan after a confirmation.
+9. "Cetak lembar muat (n truk)" opens the A4 landscape print preview for all trucks; choose "Simpan sebagai PDF" in the print dialog to get a PDF.
 
 ## Loader sheet (printed PDF)
 
@@ -54,7 +63,7 @@ Each truck in the shipment gets its own set of pages; every page header shows th
   - D: "Rebah · sisi pendek ke pintu" (laid down, short side to the door)
   - E: "Berdiri di sisi pendek · tutup ke pintu" (stood on its short side, lid to the door)
   - F: "Berdiri di sisi pendek · sisi panjang ke pintu" (stood on its short side, long side to the door)
-- Tier pages: six tiers per page, each drawn as seen from the door looking toward the cab, with a bar showing where the tier sits in the truck, "◀ kiri / kanan ▶" (left and right as seen from the door), "↔ berjajar" (cartons side by side) and "↕ tumpuk" (cartons stacked up), counts per SKU, and boxes for actual count, photo and checker.
+- Tier pages: six tiers per page, each drawn as seen from the door looking toward the cab, with a bar showing where the tier sits in the truck, "◀ kiri / kanan ▶" (left and right as seen from the door), "↔ berjajar" (cartons side by side) and "↕ tumpuk" (cartons stacked up), counts per SKU, the wall gaps left and right ("Celah dinding"), a layer-by-layer list from the floor up ("Lapis 1–7: 9× 1B", layers that look the same are grouped, "ganjil"/"genap" = odd/even layers), and boxes for actual count, photo and checker. Cartons hidden behind others (e.g. behind a turned carton) are drawn as a dashed outline and listed as "di belakang".
 
 If the input changes after a run, a note says to run the optimizer again.
 
@@ -63,17 +72,19 @@ Fixed quantities are always loaded first; "maks" lines only fill the space left.
 ## The three models
 
 - "Bebas" (free): free geometry for the highest carton count. It builds tiers too (one carton deep, across the width), so loaders get a count and a picture per tier, but cartons may be rotated any way and SKUs mix freely. (If "Bangun per tier" is switched off in its rules, it falls back to 1-metre segments.)
-- "Standar" (standard): neat tiers with no gaps, SKUs grouped together, safety first. One SKU per tier, other SKUs only fill the rest of a tier (same product group first). Interlocked layers. Respects each SKU's safe stacking height.
+- "Standar" (standard): safety first. Plans with cartons at risk lose to more stable plans, fillers that could tip or slide are left out, and a SKU's last rows are split over two tiers of even height instead of a tall tier beside a short one. Neat tiers, SKUs grouped, one SKU per tier with other SKUs only filling the rest of a tier. Interlocked layers. Respects each SKU's safe stacking height. The older "leave space to keep tiers level" behaviour is now an optional extra rule ("ratakan tier", off by default).
 - "Campuran" (mixed): Standar tiers, with the leftover space filled freely by other SKUs.
 
 A tier is one carton deep and spans the full truck width, built from the cab toward the door (or from the door, if the rule says so). Each tier gets a photo and a count on the loader sheet.
+
+When a SKU's last cartons are too few for a tier of their own, they are laid on top of the next SKU's tier instead of standing alone as a short tier of a few cartons.
 
 Rules that apply to every model: cartons stay inside the truck and never overlap; the bottom layer is filled across the full width first; every carton is fully supported (interlock patterns use the minimum support setting); fixed quantities load before "maks" lines; planning size = outer size + per-side adjustment.
 
 ## Results screen
 
-- "Ringkasan" (summary): total cartons, volume use ("Pemakaian volume"), tier count, used length, total weight, truck and destination info. "Tampilkan karton per tier" lists counts per tier.
-- "Model 3D": drag to rotate, scroll or pinch to zoom, click a carton for details. The truck is drawn with a blue cab at the front and the rear doors swung open at the back, so front and back are clear from any angle. "Label & ukuran" shows or hides the KABIN and PINTU labels and the inner length, width and height lines (P, L, T in cm) beside the box; they stay attached to the truck and sit outside the cargo. Compare the drawn height with the real truck to spot a wrong size. Colour by SKU, by tier, or by risk. "Langkah demi langkah" steps through the tiers one by one. If the browser lacks WebGL, the 3D view is not available but the tier plan still works.
+- "Ringkasan" (summary): total cartons, volume use ("Pemakaian volume"), tier count, used length, total weight, truck and destination info. "Karton per tier" (open by default) lists the count of every tier; click a row to show that tier in 3D. Each row has "‹" (move the tier towards the cab), a position number to pick, and "›" (towards the door): the tier moves to that place in the loading order, the tiers in between shift by one, tiers are numbered again and the stability check runs again. The plan then shows "Urutan tier diubah"; Urungkan (Ctrl+Z) moves it back. Free plans in 1-metre segments cannot be reordered.
+- "Model 3D": drag to rotate, scroll or pinch to zoom, click a carton for details. The truck is drawn with a blue cab at the front and the rear doors swung open at the back, so front and back are clear from any angle. "Jumlah per tier" shows or hides a tag above each tier with its number and carton count (T1 / 90). "Label & ukuran" shows or hides the KABIN and PINTU labels and the inner length, width and height lines (P, L, T in cm) beside the box; they stay attached to the truck and sit outside the cargo. Compare the drawn height with the real truck to spot a wrong size. Colour by SKU, by tier, or by risk. "Langkah demi langkah" steps through the tiers one by one. If the browser lacks WebGL, the 3D view is not available but the tier plan still works.
 - "Cek stabilitas" (stability check): simulates braking (push toward the cab), speeding up (toward the door), curves (sideways) and optionally bumps, with friction between cartons. Cartons are flagged if they could tip over ("Bisa terguling"), slide ("Bisa bergeser", a gap over 10 cm) or are not supported in the middle ("Tidak bertumpu di tengah"). The open face of the load (the end not touching a wall) should be blocked or strapped. Fill flagged gaps with dunnage or strap them.
 - "Detail": tier data, SKUs in the shipment, truck size, destination and the model rules used.
 
@@ -123,7 +134,8 @@ Each model has its own rules. Changes apply to the next optimization; saved plan
 - "Yang berat di bawah": heavier SKUs at the bottom.
 - "Celah maksimum dalam tier (cm, 0 = bebas)": patterns leaving a wider gap are rejected (Standar and Campuran default 10 cm).
 - "Arah pengisian": from the cab to the door, or from the door to the cab (e.g. wingbox trucks).
-- "Utamakan keamanan": rank plans by stability before carton count (on by default for Standar).
+- "Utamakan keamanan": rank plans by stability before carton count, leave out fillers that could tip or slide, split a SKU's last rows into two even tiers (on by default for Standar).
+- "Aturan tambahan: ratakan tier": optional extra rule, off by default. A tier may stand no higher above the previous one than it can without tipping when braking, and upper layers are only laid when complete. It leaves empty space, so it can need more trucks.
 - "Waktu pencarian (detik)": search time per model (defaults: Bebas 3, Standar 2, Campuran 3).
 - "Fisika (cek stabilitas)": brake push 0.8 g, acceleration 0.5 g, sideways 0.5 g, bump 0 g, friction 0.4, allowed slide gap 10 cm (defaults from EN 12195-1 road transport). Raise them for bad roads or hard braking.
 

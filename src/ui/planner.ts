@@ -1,4 +1,4 @@
-import { MODEL_ORDER, gridCapacity, poseOf, withDefaults, type ModelId, type PlacedBox, type PlanResult, type SearchProgress, type ShipmentRequest, type ShipmentResult } from '../engine';
+import { MODEL_ORDER, canMoveTiers, gridCapacity, moveTier, poseOf, withDefaults, type ModelId, type PlacedBox, type PlanResult, type SearchProgress, type ShipmentRequest, type ShipmentResult } from '../engine';
 import type { WorkerRequest, WorkerResponse } from '../engine/worker';
 import * as repo from '../db/repo';
 import type { Destination, Sku, TruckType, Vehicle } from '../db/repo';
@@ -52,6 +52,30 @@ export interface PlanningTruck extends repo.PlanTruck {
 }
 
 const LABELS_KEY = 'tlo-3d-labels';
+const TIER_COUNTS_KEY = 'tlo-3d-tier-counts';
+const GROUP_KEY = 'tlo-group-sku';
+const TARGET_KEY = 'tlo-truck-target';
+/** Steps kept for Urungkan (Ctrl+Z). */
+const UNDO_LIMIT = 60;
+
+/** Truck target for the search: none, the fewest possible, or a number of trucks. */
+type TruckTarget = '' | 'min' | number;
+
+/** Everything Urungkan (Ctrl+Z) puts back: the input and the results on screen. */
+interface Snapshot {
+  shipmentNo: string;
+  tempNo: string;
+  shipmentId: number | null;
+  note: string;
+  destination: Destination | null;
+  zone: string | null;
+  lines: Line[];
+  slots: TruckSlot[];
+  results: Partial<Record<ModelId, ShipmentResult>>;
+  selected: ModelId;
+  truckIdx: number;
+  stale: boolean;
+}
 
 const typeDims = (tr: TruckType | null | undefined): Dims => ({ length: tr?.inner_length_cm ?? 0, width: tr?.inner_width_cm ?? 0, height: tr?.inner_height_cm ?? 0 });
 const sameDims = (a: Dims, b: Dims) => a.length === b.length && a.width === b.width && a.height === b.height;
@@ -59,12 +83,29 @@ const hasDims = (d: Dims) => d.length > 0 && d.width > 0 && d.height > 0;
 /** Temporary shipment number for drafts, until the real number is entered. */
 const tempNumber = () => `TMP-${Date.now().toString(36).toUpperCase()}`;
 
-function readLabels(): boolean {
+function readStore(key: string): string | null {
   try {
-    return localStorage.getItem(LABELS_KEY) !== 'off';
+    return localStorage.getItem(key);
   } catch {
-    return true;
+    return null;
   }
+}
+
+function writeStore(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage blocked: the choice lasts for this page.
+  }
+}
+
+const readLabels = () => readStore(LABELS_KEY) !== 'off';
+
+function readTarget(): TruckTarget {
+  const v = readStore(TARGET_KEY);
+  if (v === 'min') return 'min';
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : '';
 }
 
 export class Planner {
@@ -85,10 +126,19 @@ export class Planner {
   private truckIdx = 0;
   private colorMode: ColorMode = 'sku';
   private upToTier = 0;
-  private showPerTier = false;
+  private showPerTier = true;
   private detailsOpen = false;
   private picked: PlacedBox | null = null;
   private labels = readLabels();
+  private tierCounts = readStore(TIER_COUNTS_KEY) !== 'off';
+  /** Group cartons by SKU in all three models (packers load one SKU after another). */
+  private groupBySku = readStore(GROUP_KEY) !== 'off';
+  private truckTarget: TruckTarget = readTarget();
+  private zone: string | null = null;
+  private undoStack: Snapshot[] = [];
+  private redoStack: Snapshot[] = [];
+  /** Set while one user action makes several changes, so they are undone together. */
+  private batching = false;
   private trucks: TruckType[] = [];
   private vehicles: Vehicle[] = [];
   private view: TruckView | null = null;
@@ -106,6 +156,10 @@ export class Planner {
   private trucksBox = h('div', { class: 'truck-slots' });
   private plateList = h('datalist', { id: 'plate-list' });
   private runBtn = h('button', { class: 'btn primary run', type: 'button' }, t.run);
+  private zoneSelect = h('select', { id: 'zone-select' });
+  private destNote = h('p', { class: 'hint', hidden: true });
+  private undoBtn = h('button', { class: 'btn ghost small', type: 'button', title: t.undoHint, 'aria-label': t.undoHint, disabled: true }, `↶ ${t.undo}`);
+  private redoBtn = h('button', { class: 'btn ghost small', type: 'button', title: t.redoHint, 'aria-label': t.redoHint, disabled: true }, '↷');
   private message = h('p', { class: 'message', role: 'status' });
   private stageHead = h('div', { class: 'stage-head' });
   private stageTools = h('div', { class: 'stage-tools' });
@@ -145,7 +199,8 @@ export class Planner {
     this.destCombo = combobox<Destination>({
       id: 'dest-search',
       placeholder: t.destinationPlaceholder,
-      search: (q) => repo.searchDestinations(q),
+      // With a zone picked first, the list shows that zone's destinations as soon as the field is clicked.
+      search: (q) => repo.searchDestinations(q, this.zone ? 80 : 12, this.zone),
       render: (d) => h('div', { class: 'opt' }, h('strong', {}, d.customer), h('span', { class: 'muted' }, ` ${d.city}`), h('div', { class: 'opt-meta' }, `${d.zone ?? ''} · ${d.vehicle_type_raw ?? ''}`)),
       keepText: (d) => `${d.customer} – ${d.city}`,
       onPick: (d) => this.setDestination(d),
@@ -162,7 +217,90 @@ export class Planner {
     this.slots = [this.newSlot(null)];
     this.reloadTrucks();
     this.runBtn.addEventListener('click', () => this.run());
+    this.undoBtn.addEventListener('click', () => this.undo());
+    this.redoBtn.addEventListener('click', () => this.redo());
+    document.addEventListener('keydown', (e) => this.onKey(e));
     this.renderAll();
+  }
+
+  // ---------- Undo (Ctrl+Z) ----------
+
+  private snapshot(): Snapshot {
+    return {
+      shipmentNo: this.shipmentNo,
+      tempNo: this.tempNo,
+      shipmentId: this.shipmentId,
+      note: this.note,
+      destination: this.destination,
+      zone: this.zone,
+      lines: this.lines.map((l) => ({ ...l })),
+      slots: this.slots.map((s) => ({ ...s, dims: { ...s.dims } })),
+      results: { ...this.results },
+      selected: this.selected,
+      truckIdx: this.truckIdx,
+      stale: this.stale,
+    };
+  }
+
+  /** Call before every change the user may want to take back. */
+  private remember(state = this.snapshot()) {
+    if (this.batching) return;
+    this.undoStack.push(state);
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+    this.redoStack = [];
+    this.renderUndo();
+  }
+
+  private undo() {
+    const prev = this.undoStack.pop();
+    if (!prev) return this.say(t.nothingToUndo);
+    this.redoStack.push(this.snapshot());
+    this.restore(prev);
+    this.say(t.undone);
+  }
+
+  private redo() {
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push(this.snapshot());
+    this.restore(next);
+    this.say(t.redone);
+  }
+
+  private restore(s: Snapshot) {
+    this.cancel();
+    Object.assign(this, { ...s, lines: s.lines.map((l) => ({ ...l })), slots: s.slots.map((x) => ({ ...x, dims: { ...x.dims } })), results: { ...s.results } });
+    this.progress = {};
+    this.truckIdx = Math.max(0, Math.min(this.truckIdx, this.slots.length - 1));
+    this.upToTier = 0;
+    this.picked = null;
+    this.shipmentCombo.setText(this.shipmentNo);
+    this.noteInput.value = this.note;
+    this.destCombo.setText(this.destination ? `${this.destination.customer} – ${this.destination.city}` : '');
+    this.renderZones();
+    this.renderAll();
+    this.update3d(true);
+  }
+
+  private renderUndo() {
+    this.undoBtn.disabled = !this.undoStack.length;
+    this.redoBtn.disabled = !this.redoStack.length;
+  }
+
+  /** Ctrl+Z / Ctrl+Y (Cmd on a Mac) on the planner; inside a text field the browser's own undo runs. */
+  private onKey(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !this.el.isConnected) return;
+    if (document.querySelector('dialog[open], #print-root')) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('input:not([type=checkbox]):not([type=radio]):not([type=button]), textarea, [contenteditable="true"]')) return;
+    const key = e.key.toLowerCase();
+    if (key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      this.undo();
+    } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
+      e.preventDefault();
+      this.redo();
+    }
   }
 
   /** Called after master data changes so dropdowns and searches see the new rows. */
@@ -182,6 +320,7 @@ export class Planner {
     if (this.view) return;
     this.view = new TruckView(this.canvasHost);
     this.view.setLabels(this.labels);
+    this.view.setTierCounts(this.tierCounts);
     this.view.onPick = (box) => {
       this.picked = box;
       this.renderPicked();
@@ -210,6 +349,16 @@ export class Planner {
       this.renderLock();
       this.renderHelper();
     });
+    // A shipment number saved before brings its destination; Enter moves on to the zone and destination.
+    this.shipmentCombo.input.addEventListener('change', () => this.shipmentEntered());
+    this.shipmentCombo.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && this.shipmentNo && !this.destination) setTimeout(() => this.zoneSelect.focus(), 0);
+    });
+    this.zoneSelect.addEventListener('change', () => {
+      this.zone = this.zoneSelect.value || null;
+      // Straight on to the destinations of that zone.
+      if (this.zone) this.destCombo.input.focus();
+    });
     this.noteInput.addEventListener('input', () => (this.note = this.noteInput.value.trim()));
 
     const sku = combobox<Sku>({
@@ -235,9 +384,11 @@ export class Planner {
       h('p', { class: 'hint' }, t.aiInputHint),
     );
 
+    this.renderZones();
     this.inputFields.append(
-      h('label', { for: 'dest-search' }, t.destination),
-      this.destCombo.el,
+      h('div', { class: 'dest-row' }, h('label', { for: 'zone-select' }, t.zoneLabel, this.zoneSelect), h('label', { for: 'dest-search', class: 'grow' }, t.destination, this.destCombo.el)),
+      h('p', { class: 'hint' }, t.zoneHint),
+      this.destNote,
       this.destCard,
       h(
         'div',
@@ -259,11 +410,63 @@ export class Planner {
       this.plateList,
       h('label', { for: 'note' }, t.noteLabel),
       this.noteInput,
+      this.optionsBox(),
       this.runBtn,
       this.message,
       ai,
     );
     return h('section', { class: 'input panel' }, h('h2', {}, t.inputTitle), this.lockNote, this.inputFields);
+  }
+
+  /** Zone filter for the destination search; the destination's own zone is picked when it has none yet. */
+  private renderZones() {
+    const zones = repo.listZones();
+    this.zoneSelect.replaceChildren(h('option', { value: '' }, t.zoneAll), ...zones.map((z) => h('option', { value: z.zone, selected: z.zone === this.zone }, `${z.zone} (${z.n})`)));
+  }
+
+  /** A shipment number that was saved before fills in its destination (the plan itself opens from the list). */
+  private shipmentEntered() {
+    const no = this.shipmentCombo.input.value.trim();
+    this.destNote.hidden = true;
+    if (!no || this.destination) return;
+    const known = repo.shipmentByNo(no);
+    const dest = known?.destination_id ? repo.listDestinations().find((d) => d.id === known.destination_id) : null;
+    if (!dest) return;
+    this.setDestination(dest);
+    this.destCombo.setText(`${dest.customer} – ${dest.city}`);
+    this.destNote.textContent = t.shipmentKnown(`${dest.customer} – ${dest.city}`);
+    this.destNote.hidden = false;
+  }
+
+  /** Options that apply to all three models: grouping by SKU and how many trucks to aim for. */
+  private optionsBox(): HTMLElement {
+    const group = h('input', { type: 'checkbox', checked: this.groupBySku });
+    group.addEventListener('change', () => {
+      this.groupBySku = group.checked;
+      writeStore(GROUP_KEY, group.checked ? 'on' : 'off');
+      this.markStale();
+    });
+    const target = h(
+      'select',
+      { id: 'truck-target' },
+      h('option', { value: '', selected: this.truckTarget === '' }, t.targetNone),
+      h('option', { value: 'min', selected: this.truckTarget === 'min' }, t.targetMin),
+      ...[1, 2, 3, 4, 5].map((n) => h('option', { value: n, selected: this.truckTarget === n }, t.targetN(n))),
+    );
+    target.addEventListener('change', () => {
+      this.truckTarget = target.value === 'min' ? 'min' : Number(target.value) || '';
+      writeStore(TARGET_KEY, String(this.truckTarget));
+      this.markStale();
+    });
+    return h(
+      'fieldset',
+      { class: 'run-options' },
+      h('legend', {}, t.optionsTitle),
+      h('label', { class: 'check' }, group, ` ${t.groupBySku}`),
+      h('p', { class: 'hint' }, t.groupBySkuHint),
+      h('label', { for: 'truck-target' }, t.truckTarget, target),
+      h('p', { class: 'hint' }, t.targetHint),
+    );
   }
 
   /** The shipment number comes first: the input panel opens once there is one (or a reopened draft's number). */
@@ -277,7 +480,11 @@ export class Planner {
   private async reset() {
     const dirty = this.shipmentNo || this.tempNo || this.lines.length || this.destination || Object.keys(this.results).length;
     if (dirty && !(await confirmDialog(t.resetConfirm, t.resetPlan, t.cancel))) return;
+    this.remember();
     this.cancel();
+    this.zone = null;
+    this.zoneSelect.value = '';
+    this.destNote.hidden = true;
     this.shipmentNo = '';
     this.tempNo = '';
     this.shipmentId = null;
@@ -334,6 +541,7 @@ export class Planner {
         ...(templates.length ? [h('optgroup', { label: t.isTemplate }, ...templates.map((tr) => option(tr, tr.id === slot.typeId)))] : []),
       );
       select.addEventListener('change', () => {
+        this.remember();
         slot.typeId = Number(select.value) || null;
         slot.auto = false;
         const d = typeDims(this.typeOf(slot.typeId));
@@ -343,6 +551,7 @@ export class Planner {
       const dim = (key: keyof Dims, label: string) => {
         const input = h('input', { type: 'number', min: 1, step: 'any', inputmode: 'decimal', value: slot.dims[key] || '', 'aria-label': `${label} ${t.truckN(i + 1)}` });
         input.addEventListener('change', () => {
+          this.remember();
           slot.dims = { ...slot.dims, [key]: Number(input.value.replace(',', '.')) || 0 };
           slot.auto = false;
           this.truckChanged();
@@ -373,7 +582,7 @@ export class Planner {
         ),
         h('label', {}, t.plateNo, plate),
         h('label', {}, t.truckType, select),
-        h('div', { class: 'dims-head' }, h('span', {}, t.innerSize), edited ? h('button', { class: 'link-btn', type: 'button', onclick: () => ((slot.dims = typeDims(type)), this.truckChanged()) }, t.sizeReset) : null),
+        h('div', { class: 'dims-head' }, h('span', {}, t.innerSize), edited ? h('button', { class: 'link-btn', type: 'button', onclick: () => (this.remember(), (slot.dims = typeDims(type)), this.truckChanged()) }, t.sizeReset) : null),
         h('div', { class: 'dims-grid' }, dim('length', t.lengthShort), dim('width', t.widthShort), dim('height', t.heightShort)),
         edited ? h('p', { class: 'hint' }, h('span', { class: 'tag warn' }, t.sizeEdited), ` ${t.sizeEditedHint}`) : null,
         ...notes,
@@ -387,6 +596,7 @@ export class Planner {
 
   /** A known plate number brings its truck type and last size. */
   private setPlate(i: number, raw: string) {
+    this.remember();
     const slot = this.slots[i];
     slot.plateNo = repo.normalizePlate(raw);
     if (slot.plateNo) slot.auto = false;
@@ -400,12 +610,14 @@ export class Planner {
   }
 
   private addSlot() {
+    this.remember();
     const last = this.slots[this.slots.length - 1];
     this.slots.push({ ...this.newSlot(last?.typeId ?? null), dims: last ? { ...last.dims } : { length: 0, width: 0, height: 0 } });
     this.truckChanged();
   }
 
   private removeSlot(i: number) {
+    this.remember();
     this.slots.splice(i, 1);
     this.truckIdx = Math.min(this.truckIdx, this.slots.length - 1);
     this.truckChanged();
@@ -421,7 +633,9 @@ export class Planner {
   }
 
   private setDestination(d: Destination) {
+    this.remember();
     this.destination = d;
+    this.destNote.hidden = true;
     const max = repo.maxTruckFor(d.id);
     // Trucks not tied to a plate number or a typed size follow the destination's maximum truck.
     if (max) for (const s of this.slots) if (!s.plateNo && (s.typeId == null || sameDims(s.dims, typeDims(this.typeOf(s.typeId))))) Object.assign(s, { typeId: max.id, dims: typeDims(max) });
@@ -431,6 +645,7 @@ export class Planner {
   }
 
   private addLine(s: Sku, qty: number | null, pct: number | null = null) {
+    this.remember();
     const existing = this.lines.find((l) => l.sku.id === s.id);
     if (pct != null) {
       if (existing) Object.assign(existing, { pctMode: true, pct });
@@ -457,6 +672,8 @@ export class Planner {
     const add = () => {
       let added = 0;
       const missing: string[] = [];
+      this.remember();
+      this.batching = true;
       for (const raw of area.value.split(/\r?\n/)) {
         const [code, qtyText] = raw.split(/\t|;|,/).map((x) => x.trim());
         if (!code) continue;
@@ -473,6 +690,7 @@ export class Planner {
         else this.addLine(s, Number.isFinite(q) && q > 0 ? q : null);
         added++;
       }
+      this.batching = false;
       result.textContent = t.pasteResult(added, missing);
       if (!missing.length) dialog.close();
     };
@@ -558,6 +776,7 @@ export class Planner {
         };
         showNote();
         input.addEventListener('change', () => {
+          this.remember();
           if (line.pctMode) {
             const v = parseFloat(input.value.replace(',', '.'));
             line.pct = Number.isFinite(v) && v > 0 ? Math.min(100, v) : null;
@@ -577,6 +796,7 @@ export class Planner {
           isPct ? '%' : t.unitCartons,
         );
         unit.addEventListener('click', () => {
+          this.remember();
           line.pctMode = !line.pctMode;
           line.pct = null;
           line.orderQty = null;
@@ -590,6 +810,7 @@ export class Planner {
         if (isPct) {
           order = h('input', { class: 'qty-order', type: 'number', min: 1, step: 1, inputmode: 'numeric', placeholder: t.orderQtyPlaceholder, title: t.orderQtyHint, value: line.orderQty ?? '', 'aria-label': `${t.orderQty} ${line.sku.name}` });
           order.addEventListener('change', () => {
+            this.remember();
             const v = parseInt(order!.value.replace(/\./g, ''), 10);
             line.orderQty = Number.isFinite(v) && v > 0 ? v : null;
             line.qty = this.pctQty(line);
@@ -654,6 +875,7 @@ export class Planner {
   }
 
   private moveLine(from: number, to: number) {
+    this.remember();
     const [line] = this.lines.splice(from, 1);
     this.lines.splice(to, 0, line);
     this.markStale();
@@ -661,6 +883,7 @@ export class Planner {
   }
 
   private removeLine(i: number) {
+    this.remember();
     this.lines.splice(i, 1);
     this.markStale();
     this.renderLines();
@@ -671,6 +894,7 @@ export class Planner {
 
   private run() {
     if (!this.lines.length) return this.say(t.needLines);
+    const before = this.snapshot();
     // Trucks the last calculation added (and nobody changed) are worked out again.
     this.slots = this.slots.filter((s, i) => i === 0 || !s.auto);
     const trucks: PlanningTruck[] = [];
@@ -680,6 +904,7 @@ export class Planner {
       trucks.push(tr);
     }
     this.say('');
+    this.remember(before);
     if (!this.shipmentNo && !this.tempNo) this.tempNo = tempNumber();
     const rules = repo.loadRules();
     this.syncPctLines();
@@ -723,7 +948,8 @@ export class Planner {
         this.renderLoading();
         if (MODEL_ORDER.every((m) => this.results[m] || this.progress[m]?.fraction === 1)) this.finishRun();
       };
-      const req: ShipmentRequest = { ...base, rules: rules[model] };
+      // Grouping by SKU is chosen once for all three models.
+      const req: ShipmentRequest = { ...base, rules: { ...rules[model], groupBySku: this.groupBySku }, truckTarget: this.truckTarget || undefined };
       worker.postMessage({ model, req } satisfies WorkerRequest);
     }
   }
@@ -829,6 +1055,7 @@ export class Planner {
         { class: 'shipment-bar' },
         h('label', { for: 'shipment-no' }, t.shipmentNo),
         this.shipmentCombo.el,
+        h('span', { class: 'undo-btns' }, this.undoBtn, this.redoBtn),
         h('button', { class: 'btn ghost small reset-btn', type: 'button', title: t.resetHint, onclick: () => this.reset() }, `↺ ${t.resetPlan}`),
         this.shipmentHint,
       ),
@@ -906,6 +1133,11 @@ export class Planner {
       { class: `btn ghost small${this.labels ? ' on' : ''}`, type: 'button', 'aria-pressed': String(this.labels), onclick: () => this.toggleLabels() },
       this.labels ? `☑ ${t.showLabels}` : `☐ ${t.showLabels}`,
     );
+    const counts = h(
+      'button',
+      { class: `btn ghost small${this.tierCounts ? ' on' : ''}`, type: 'button', 'aria-pressed': String(this.tierCounts), onclick: () => this.toggleTierCounts() },
+      this.tierCounts ? `☑ ${t.tierCountLabels}` : `☐ ${t.tierCountLabels}`,
+    );
     if (!plan) {
       this.stageTools.replaceChildren(labels, h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.view?.frameCamera() }, t.resetView));
       return;
@@ -937,6 +1169,7 @@ export class Planner {
       ),
       h('button', { class: 'btn small', type: 'button', onclick: () => set(1) }, t.stepThrough),
       h('button', { class: 'btn small', type: 'button', disabled: !this.upToTier, onclick: () => set(n) }, t.all),
+      counts,
       labels,
       h('button', { class: 'btn ghost small', type: 'button', onclick: () => this.view?.frameCamera() }, t.resetView),
     );
@@ -944,13 +1177,37 @@ export class Planner {
 
   private toggleLabels() {
     this.labels = !this.labels;
-    try {
-      localStorage.setItem(LABELS_KEY, this.labels ? 'on' : 'off');
-    } catch {
-      // Storage blocked: the choice lasts for this page.
-    }
+    writeStore(LABELS_KEY, this.labels ? 'on' : 'off');
     this.view?.setLabels(this.labels);
     this.renderStageTools();
+  }
+
+  /** The number of cartons above each tier in the 3D view. */
+  private toggleTierCounts() {
+    this.tierCounts = !this.tierCounts;
+    writeStore(TIER_COUNTS_KEY, this.tierCounts ? 'on' : 'off');
+    this.view?.setTierCounts(this.tierCounts);
+    this.renderStageTools();
+  }
+
+  /** Moves a tier of the truck on screen to another place in the loading order (Urungkan takes it back). */
+  private moveTier(from: number, to: number) {
+    const result = this.selectedResult();
+    const plan = this.selectedPlan();
+    const truck = this.slotTruck(this.truckIdx);
+    if (!result || !plan || !truck || from === to) return;
+    this.remember();
+    const moved = moveTier(plan, from, to, truck);
+    const trucks = result.trucks.map((p, i) => (i === this.truckIdx ? moved : p));
+    this.results = { ...this.results, [this.selected]: { ...result, trucks } };
+    this.upToTier = to;
+    this.picked = null;
+    this.say(t.tierMoved(from, to));
+    this.update3d(false);
+    this.renderStageTools();
+    this.renderStageHead();
+    this.renderSummary();
+    this.renderDetails();
   }
 
   private renderPicked() {
@@ -1004,7 +1261,6 @@ export class Planner {
     const result = this.selectedResult();
     const plan = this.selectedPlan();
     const skuOf = (id: number) => this.lines.find((l) => l.sku.id === id)?.sku;
-    const skuIdx = (id: number) => this.lines.findIndex((l) => l.sku.id === id);
     const out: (HTMLElement | null)[] = [];
 
     if (result) {
@@ -1017,6 +1273,7 @@ export class Planner {
           h('div', { class: 'kpi' }, h('span', { class: 'kpi-label' }, t.trucksUsed), h('span', { class: 'kpi-value' }, fmt.int(result.trucks.length))),
         ),
         this.fillBlock(result.trucks),
+        result.target ? this.targetNote(result) : null,
         unplaced.length
           ? h(
               'div',
@@ -1038,6 +1295,7 @@ export class Planner {
     if (plan) {
       out.push(
         h('h3', { class: 'summary-sub' }, t.thisTruck(this.truckIdx + 1, result!.trucks.length), this.slots[this.truckIdx]?.plateNo ? h('span', { class: 'mono' }, ` · ${this.slots[this.truckIdx].plateNo}`) : null),
+        plan.edited ? h('p', { class: 'hint' }, h('span', { class: 'tag warn' }, t.editedTag), ` ${t.editedHint}`) : null,
         h(
           'div',
           { class: 'kpis' },
@@ -1047,6 +1305,15 @@ export class Planner {
         ),
       );
       out.push(stabilityBlock(plan, this.colorMode === 'risk'));
+      // Cartons per tier, open by default: loaders count and photograph tier by tier.
+      out.push(
+        h(
+          'div',
+          { class: 'per-tier' },
+          h('button', { class: 'btn ghost small', type: 'button', onclick: () => ((this.showPerTier = !this.showPerTier), this.renderSummary()) }, this.showPerTier ? t.hidePerTier : t.showPerTier),
+          this.showPerTier ? this.tierList(plan) : null,
+        ),
+      );
     }
 
     if (tr)
@@ -1084,36 +1351,65 @@ export class Planner {
         ),
       );
 
-    if (plan)
-      out.push(
-        h(
-          'div',
-          { class: 'per-tier' },
-          h('button', { class: 'btn ghost small', type: 'button', onclick: () => ((this.showPerTier = !this.showPerTier), this.renderSummary()) }, this.showPerTier ? t.hidePerTier : t.showPerTier),
-          this.showPerTier
-            ? h(
-                'ol',
-                { class: 'tier-list' },
-                ...plan.tiers.map((tier) =>
-                  h(
-                    'li',
-                    { class: tier.index === this.upToTier ? 'on' : '' },
-                    h(
-                      'button',
-                      { type: 'button', onclick: () => this.focusTier(tier.index) },
-                      h('span', { class: 'tl-no' }, `${plan.segmentTiers ? t.segments : t.tierNo} ${tier.index}`),
-                      h('span', { class: 'tl-chips' }, ...Object.entries(tier.counts).map(([id, c]) => h('span', { class: 'chip', title: skuOf(Number(id))?.name ?? '' }, h('i', { style: `background:${skuColor(skuIdx(Number(id)))}` }), `${skuOf(Number(id))?.code ?? id} ${fmt.int(c)}`))),
-                      h('span', { class: 'tl-total' }, fmt.int(tier.total)),
-                    ),
-                  ),
-                ),
-              )
-            : null,
-        ),
-      );
 
     this.summaryBox.replaceChildren(...(out.filter(Boolean) as HTMLElement[]));
     if (!this.summaryBox.childElementCount) this.summaryBox.append(h('p', { class: 'muted' }, t.emptyState));
+  }
+
+  /**
+   * Cartons per tier, each row clickable to show that tier in 3D. Real tiers can be moved to
+   * another place in the loading order (‹ towards the cab, › towards the door, or a position).
+   */
+  private tierList(plan: PlanResult): HTMLElement {
+    const skuOf = (id: number) => this.lines.find((l) => l.sku.id === id)?.sku;
+    const skuIdx = (id: number) => this.lines.findIndex((l) => l.sku.id === id);
+    const movable = canMoveTiers(plan);
+    const n = plan.tiers.length;
+    return h(
+      'div',
+      {},
+      movable ? h('p', { class: 'hint' }, t.moveTierHint) : null,
+      h(
+        'ol',
+        { class: 'tier-list' },
+        ...plan.tiers.map((tier) => {
+          const i = tier.index;
+          const pos = h(
+            'select',
+            { class: 'tl-pos', 'aria-label': t.moveToLabel(i), title: t.moveToLabel(i) },
+            ...Array.from({ length: n }, (_, k) => h('option', { value: k + 1, selected: k + 1 === i }, String(k + 1))),
+          );
+          pos.addEventListener('change', () => this.moveTier(i, Number(pos.value)));
+          return h(
+            'li',
+            { class: tier.index === this.upToTier ? 'on' : '' },
+            h(
+              'button',
+              { type: 'button', class: 'tl-main', onclick: () => this.focusTier(i) },
+              h('span', { class: 'tl-no' }, `${plan.segmentTiers ? t.segments : t.tierNo} ${i}`),
+              h('span', { class: 'tl-chips' }, ...Object.entries(tier.counts).map(([id, c]) => h('span', { class: 'chip', title: skuOf(Number(id))?.name ?? '' }, h('i', { style: `background:${skuColor(skuIdx(Number(id)))}` }), `${skuOf(Number(id))?.code ?? id} ${fmt.int(c)}`))),
+              h('span', { class: 'tl-total' }, fmt.int(tier.total)),
+            ),
+            movable
+              ? h(
+                  'span',
+                  { class: 'tl-move' },
+                  h('button', { class: 'icon', type: 'button', title: t.moveEarlier, 'aria-label': `${t.moveEarlier} (${t.tierNo} ${i})`, disabled: i === 1, onclick: () => this.moveTier(i, i - 1) }, '‹'),
+                  pos,
+                  h('button', { class: 'icon', type: 'button', title: t.moveLater, 'aria-label': `${t.moveLater} (${t.tierNo} ${i})`, disabled: i === n, onclick: () => this.moveTier(i, i + 1) }, '›'),
+                )
+              : null,
+          );
+        }),
+      ),
+    );
+  }
+
+  /** Whether the truck target was met, and why not when it was not. */
+  private targetNote(result: ShipmentResult): HTMLElement {
+    const x = result.target!;
+    const text = x.reached ? t.targetReached(x.goal) : x.goal < x.lowerBound ? t.targetImpossible(x.goal, x.lowerBound) : t.targetMissed(x.goal, result.trucks.length, x.rounds);
+    return h('p', { class: x.reached ? 'target-note ok' : 'target-note bad' }, text);
   }
 
   /**
@@ -1356,7 +1652,7 @@ export class Planner {
     const rulesBody = h(
       'div',
       { class: 'rules' },
-      h('h4', {}, 'Semua model'),
+      h('h4', {}, t.fixedRulesTitle),
       h('ul', {}, ...t.fixedRules.map((r) => h('li', {}, r))),
       ...MODEL_ORDER.map((m) =>
         h('div', { class: m === this.selected ? 'rule-block on' : 'rule-block' }, h('h4', {}, `${t.models[m]}${m === this.selected ? ` · ${t.chosen}` : ''}`), h('ul', {}, ...describeRules(plan?.model === m ? plan.rules : rules[m]).map((r) => h('li', {}, r)))),
@@ -1398,6 +1694,7 @@ export class Planner {
     this.renderSummary();
     this.renderDetails();
     this.renderHelper();
+    this.renderUndo();
   }
 
   /**
@@ -1405,6 +1702,7 @@ export class Planner {
    * multi-truck tabs, plate numbers and carton positions all show. Nothing is saved until the user saves it.
    */
   loadExample() {
+    this.remember();
     this.cancel();
     const dest = repo.searchDestinations('UNIRAMA', 1)[0] ?? repo.listDestinations()[0] ?? null;
     this.destination = dest;
@@ -1439,6 +1737,7 @@ export class Planner {
   loadShipment(shipmentId: number, truckSeq = 1) {
     const plans = repo.shipmentPlans(shipmentId);
     if (!plans.length) return;
+    this.remember();
     this.cancel();
     const first = plans[0];
     this.shipmentId = shipmentId;

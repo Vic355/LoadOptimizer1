@@ -44,8 +44,23 @@ export interface ModelRules {
   heavyBottom: boolean;
   /** Widest empty space (cm) a tier pattern may leave beside or behind a carton; 0 means no limit. */
   maxGapCm: number;
-  /** Rank plans by the stability check first and carton count second. */
+  /**
+   * Safety first, the core of Standar: plans are ranked by the stability check before carton count,
+   * fillers that would tip or slide are left out (they go to a later tier), and a SKU's last rows
+   * are split over two tiers of even height instead of a tall tier beside a short one.
+   */
   safetyFirst: boolean;
+  /**
+   * Optional extra rule: keep tiers level by leaving space. A tier may stand no higher above the
+   * previous one than it can without tipping when braking, and upper layers are only laid as
+   * complete rows. Leaves empty space.
+   */
+  levelTiers: boolean;
+  /**
+   * Keep each SKU together the way packers group it: a SKU's tiers follow one another, and other
+   * SKUs only share the tier where one SKU ends and the next begins.
+   */
+  groupBySku: boolean;
   /** Where loading starts: tiers are built from the cab towards the door, or from the door towards the cab. */
   fillFrom: 'cab' | 'door';
   physics: PhysicsRules;
@@ -67,6 +82,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     heavyBottom: true,
     maxGapCm: 0,
     safetyFirst: false,
+    levelTiers: false,
+    groupBySku: false,
     fillFrom: 'cab',
     physics: DEFAULT_PHYSICS,
     searchSeconds: 3,
@@ -82,6 +99,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     heavyBottom: true,
     maxGapCm: 10,
     safetyFirst: true,
+    levelTiers: false,
+    groupBySku: true,
     fillFrom: 'cab',
     physics: DEFAULT_PHYSICS,
     searchSeconds: 2,
@@ -97,6 +116,8 @@ export const DEFAULT_RULES: Record<ModelId, ModelRules> = {
     heavyBottom: true,
     maxGapCm: 10,
     safetyFirst: false,
+    levelTiers: false,
+    groupBySku: false,
     fillFrom: 'cab',
     physics: DEFAULT_PHYSICS,
     searchSeconds: 3,

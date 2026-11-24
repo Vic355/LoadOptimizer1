@@ -1,4 +1,4 @@
-import type { EngineLine, ModelId, PlanResult, SearchProgress, ShipmentRequest, ShipmentResult } from './types';
+import type { EngineLine, ModelId, PlanResult, SearchProgress, ShipmentRequest, ShipmentResult, TruckTargetResult } from './types';
 import { runModel } from './models';
 
 /** Safety stop for very large orders; the rest is listed as unplaced. */
@@ -10,6 +10,62 @@ export const MAX_TRUCKS = 30;
  * fixed quantities remain; trucks after the given list repeat the last one.
  */
 export function runShipment(model: ModelId, req: ShipmentRequest, onProgress?: (p: SearchProgress) => void): ShipmentResult {
+  if (!req.truckTarget) return planShipment(model, req, onProgress);
+  return planToTarget(model, req, req.truckTarget, onProgress);
+}
+
+/** Extra search rounds when a truck target is not met, and the most extra time they may take (in search budgets). */
+const TARGET_ROUNDS = 6;
+const TARGET_TIME = 5;
+
+/** Fewest trucks the fixed quantities need by carton volume alone, filling the trucks given in order. */
+export function volumeLowerBound(req: ShipmentRequest): number {
+  let volume = 0;
+  for (const l of req.lines) if (l.qty != null && !l.fitShare) volume += l.qty * l.sku.length * l.sku.width * l.sku.height;
+  if (volume <= 0) return 1;
+  const limit = Math.min(req.maxTrucks ?? MAX_TRUCKS, MAX_TRUCKS);
+  for (let k = 0; k < limit; k++) {
+    const tr = req.trucks[Math.min(k, req.trucks.length - 1)];
+    volume -= tr.length * tr.width * tr.height;
+    if (volume <= 0) return k + 1;
+  }
+  return limit;
+}
+
+/** Fewer cartons left behind first, then fewer trucks, then more cartons loaded. */
+function fewerTrucks(a: ShipmentResult, b: ShipmentResult): boolean {
+  const left = (r: ShipmentResult) => Object.values(r.unplaced).reduce((s, n) => s + n, 0);
+  if (left(a) !== left(b)) return left(a) < left(b);
+  if (a.trucks.length !== b.trucks.length) return a.trucks.length < b.trucks.length;
+  return a.totalCartons > b.totalCartons;
+}
+
+/**
+ * Plans the shipment, then keeps searching with new random starts and more time while it needs
+ * more trucks than the goal, and keeps the plan with the fewest trucks.
+ */
+function planToTarget(model: ModelId, req: ShipmentRequest, target: number | 'min', onProgress?: (p: SearchProgress) => void): ShipmentResult {
+  const t0 = performance.now();
+  const lowerBound = volumeLowerBound(req);
+  const goal = target === 'min' ? lowerBound : Math.max(1, Math.floor(target));
+  const budget = req.timeBudgetMs ?? req.rules.searchSeconds * 1000;
+  let best = planShipment(model, req, onProgress);
+  let evaluated = best.plansEvaluated;
+  let rounds = 1;
+  // A goal below what the cartons' volume needs cannot be met by any plan, so no time is spent on it.
+  if (goal >= lowerBound) {
+    while (best.trucks.length > goal && rounds < TARGET_ROUNDS && performance.now() - t0 < budget * TARGET_TIME) {
+      const next = planShipment(model, { ...req, seed: (req.seed ?? 20261018) + rounds * 7919, timeBudgetMs: budget * (1 + rounds * 0.5) }, onProgress);
+      evaluated += next.plansEvaluated;
+      rounds++;
+      if (fewerTrucks(next, best)) best = next;
+    }
+  }
+  const info: TruckTargetResult = { goal, lowerBound, reached: best.trucks.length <= goal && !Object.keys(best.unplaced).length, rounds };
+  return { ...best, plansEvaluated: evaluated, elapsedMs: Math.round(performance.now() - t0), target: info };
+}
+
+function planShipment(model: ModelId, req: ShipmentRequest, onProgress?: (p: SearchProgress) => void): ShipmentResult {
   const requestedOf = (lines: EngineLine[]) => Object.fromEntries(lines.filter((l) => l.qty != null).map((l) => [l.sku.id, l.qty as number]));
   if (!req.lines.some((l) => l.fitShare && l.qty)) return { ...runTrucks(model, req, onProgress), requested: requestedOf(req.lines) };
 

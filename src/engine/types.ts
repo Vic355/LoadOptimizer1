@@ -110,6 +110,8 @@ export interface PlanResult {
   segmentTiers: boolean;
   /** Missing on plans saved before the stability check existed. */
   stability?: StabilityReport;
+  /** The planner changed the tier order by hand after the search. */
+  edited?: boolean;
 }
 
 export interface SearchProgress {
@@ -129,6 +131,11 @@ export interface ShipmentRequest {
   rules: ModelRules;
   /** Most trucks to plan before the rest is reported as unplaced. */
   maxTrucks?: number;
+  /**
+   * Keep searching for a plan with fewer trucks: a number of trucks to aim for, or 'min' for the
+   * fewest the carton volume allows. The search stops when the goal is met or the extra time is used.
+   */
+  truckTarget?: number | 'min';
   timeBudgetMs?: number;
   seed?: number;
 }
@@ -144,4 +151,16 @@ export interface ShipmentResult {
   totalCartons: number;
   plansEvaluated: number;
   elapsedMs: number;
+  /** Set when a truck target was asked for. */
+  target?: TruckTargetResult;
+}
+
+export interface TruckTargetResult {
+  /** Trucks aimed for. */
+  goal: number;
+  /** Fewest trucks the ordered cartons could need by volume alone (no plan can use fewer). */
+  lowerBound: number;
+  reached: boolean;
+  /** Searches run (the first one plus the extra ones). */
+  rounds: number;
 }
