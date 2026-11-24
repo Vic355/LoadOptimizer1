@@ -575,3 +575,33 @@ label.stack { display: flex; flex-direction: column; gap: 4px; font-weight: 600;
 .fill-pct { grid-area: pct; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 3.5em; text-align: right; }
 .fill-sub { grid-area: sub; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 @media print { .fill-block { display: none; } }
+
+.info { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 1.1em; height: 1.1em; font-size: 0.85em; font-weight: 600; color: var(--muted); cursor: help; vertical-align: baseline; text-transform: none; letter-spacing: 0; }
+.info:hover, .info:focus-visible, .info.open { color: var(--accent); outline: none; }
+.info-pop { display: none; position: absolute; z-index: 40; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(300px, 80vw); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.18); font-size: 0.8rem; font-weight: 400; line-height: 1.4; white-space: normal; text-align: left; }
+.info:hover .info-pop, .info:focus-visible .info-pop, .info.open .info-pop { display: block; }
+.check-row { display: flex; align-items: center; gap: 6px; }
+
+/* Run button beside the 3D view */
+.model-pick .run-near { margin-left: auto; white-space: nowrap; }
+
+/* 3D view controls: help, bigger, full screen */
+.view-btns { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; align-items: center; }
+.view-btns .info { background: var(--surface); }
+.view-btn { width: 32px; height: 32px; padding: 0; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: inherit; cursor: pointer; font-size: 1rem; line-height: 1; box-shadow: 0 2px 8px rgb(0 0 0 / 0.12); }
+.view-btn:hover, .view-btn.on, .view-btn[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-soft); }
+.view-btns .info-pop, .tier-mover .info-pop { right: 0; left: auto; transform: none; }
+.view-btns .info-pop { bottom: calc(100% + 6px); top: auto; }
+.planner.big-view .canvas-host { height: max(78vh, 420px); }
+@media (min-width: 1251px) {
+  .planner.big-view { grid-template-areas: 'input stage stage' 'input details summary'; }
+}
+.stage:fullscreen { background: var(--bg); padding: 14px; overflow: auto; border-radius: 0; }
+.stage:fullscreen .canvas-wrap { flex: 1 1 auto; min-height: 0; display: flex; }
+.stage:fullscreen .canvas-host { height: auto; flex: 1 1 auto; min-height: 320px; width: 100%; }
+
+/* Picked carton card: close button and tier mover */
+.picked-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.picked-close { width: 22px; height: 22px; padding: 0; line-height: 1; }
+.tier-mover { display: flex; align-items: center; gap: 4px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.tier-mover .icon { width: 24px; height: 26px; padding: 0; }

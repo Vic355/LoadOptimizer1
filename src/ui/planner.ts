@@ -53,6 +53,7 @@ export interface PlanningTruck extends repo.PlanTruck {
 
 const LABELS_KEY = 'tlo-3d-labels';
 const TIER_COUNTS_KEY = 'tlo-3d-tier-counts';
+const BIG_VIEW_KEY = 'tlo-3d-big';
 const GROUP_KEY = 'tlo-group-sku';
 const TARGET_KEY = 'tlo-truck-target';
 /** Steps kept for Urungkan (Ctrl+Z). */
@@ -156,6 +157,11 @@ export class Planner {
   private trucksBox = h('div', { class: 'truck-slots' });
   private plateList = h('datalist', { id: 'plate-list' });
   private runBtn = h('button', { class: 'btn primary run', type: 'button' }, t.run);
+  /** Second run button beside the 3D view, kept in step with the one under the inputs. */
+  private runBtn2 = h('button', { class: 'btn primary small run-near', type: 'button' }, `▶ ${t.run}`);
+  private bigBtn = h('button', { class: 'view-btn', type: 'button', title: t.biggerView, 'aria-label': t.biggerView, 'aria-pressed': 'false' }, '⤢');
+  private fullBtn = h('button', { class: 'view-btn', type: 'button', title: t.fullscreen, 'aria-label': t.fullscreen }, '⛶');
+  private stageEl!: HTMLElement;
   private zoneSelect = h('select', { id: 'zone-select' });
   private destNote = h('p', { class: 'hint', hidden: true });
   private undoBtn = h('button', { class: 'btn ghost small', type: 'button', title: t.undoHint, 'aria-label': t.undoHint, disabled: true }, `↶ ${t.undo}`);
@@ -217,6 +223,11 @@ export class Planner {
     this.slots = [this.newSlot(null)];
     this.reloadTrucks();
     this.runBtn.addEventListener('click', () => this.run());
+    this.runBtn2.addEventListener('click', () => this.run());
+    this.bigBtn.addEventListener('click', () => this.toggleBigView());
+    this.fullBtn.addEventListener('click', () => this.toggleFullscreen());
+    document.addEventListener('fullscreenchange', () => this.syncFullscreen());
+    if (readStore(BIG_VIEW_KEY) === 'on') this.toggleBigView(true);
     this.undoBtn.addEventListener('click', () => this.undo());
     this.redoBtn.addEventListener('click', () => this.redo());
     document.addEventListener('keydown', (e) => this.onKey(e));
@@ -386,14 +397,13 @@ export class Planner {
 
     this.renderZones();
     this.inputFields.append(
-      h('div', { class: 'dest-row' }, h('label', { for: 'zone-select' }, t.zoneLabel, this.zoneSelect), h('label', { for: 'dest-search', class: 'grow' }, t.destination, this.destCombo.el)),
-      h('p', { class: 'hint' }, t.zoneHint),
+      h('div', { class: 'dest-row' }, h('label', { for: 'zone-select' }, h('span', {}, t.zoneLabel, ' ', info(t.zoneHint)), this.zoneSelect), h('label', { for: 'dest-search', class: 'grow' }, t.destination, this.destCombo.el)),
       this.destNote,
       this.destCard,
       h(
         'div',
         { class: 'label-row' },
-        h('label', { for: 'sku-search' }, t.productsTitle),
+        h('label', { for: 'sku-search' }, t.productsTitle, ' ', info(t.qtyHint)),
         h(
           'span',
           { class: 'label-actions' },
@@ -402,10 +412,8 @@ export class Planner {
         ),
       ),
       sku.el,
-      h('p', { class: 'hint' }, t.qtyHint),
       this.linesBox,
-      h('div', { class: 'label-row' }, h('span', { class: 'label' }, t.trucksTitle)),
-      h('p', { class: 'hint' }, t.trucksHint),
+      h('div', { class: 'label-row' }, h('span', { class: 'label' }, t.trucksTitle, ' ', info(t.trucksHint))),
       this.trucksBox,
       this.plateList,
       h('label', { for: 'note' }, t.noteLabel),
@@ -462,10 +470,8 @@ export class Planner {
       'fieldset',
       { class: 'run-options' },
       h('legend', {}, t.optionsTitle),
-      h('label', { class: 'check' }, group, ` ${t.groupBySku}`),
-      h('p', { class: 'hint' }, t.groupBySkuHint),
-      h('label', { for: 'truck-target' }, t.truckTarget, target),
-      h('p', { class: 'hint' }, t.targetHint),
+      h('div', { class: 'check-row' }, h('label', { class: 'check' }, group, ` ${t.groupBySku}`), info(t.groupBySkuHint)),
+      h('label', { for: 'truck-target' }, h('span', {}, t.truckTarget, ' ', info(t.targetHint)), target),
     );
   }
 
@@ -921,8 +927,7 @@ export class Planner {
     this.upToTier = 0;
     this.truckIdx = 0;
     this.picked = null;
-    this.runBtn.disabled = true;
-    this.runBtn.textContent = t.running;
+    this.setRunBtn(true, t.running);
     this.renderShipmentHint();
     this.renderStageHead();
     this.renderTrucks();
@@ -956,8 +961,7 @@ export class Planner {
 
   private finishRun() {
     this.workers = [];
-    this.runBtn.disabled = false;
-    this.runBtn.textContent = t.run;
+    this.setRunBtn(false, t.run);
     this.loading.hidden = true;
     this.showSelected();
   }
@@ -965,8 +969,7 @@ export class Planner {
   private cancel() {
     this.workers.forEach((w) => w.terminate());
     this.workers = [];
-    this.runBtn.disabled = false;
-    this.runBtn.textContent = t.run;
+    this.setRunBtn(false, t.run);
     this.loading.hidden = true;
   }
 
@@ -1044,10 +1047,40 @@ export class Planner {
     this.renderHelper();
   }
 
+  private setRunBtn(disabled: boolean, text: string) {
+    this.runBtn.disabled = disabled;
+    this.runBtn.textContent = text;
+    this.runBtn2.disabled = disabled;
+    this.runBtn2.textContent = disabled ? text : `▶ ${text}`;
+  }
+
+  /** A taller (and on wide screens wider) 3D view, remembered on this device. */
+  private toggleBigView(on = !this.el.classList.contains('big-view')) {
+    this.el.classList.toggle('big-view', on);
+    this.bigBtn.setAttribute('aria-pressed', String(on));
+    this.bigBtn.title = on ? t.smallerView : t.biggerView;
+    this.bigBtn.setAttribute('aria-label', this.bigBtn.title);
+    this.bigBtn.textContent = on ? '⤡' : '⤢';
+    writeStore(BIG_VIEW_KEY, on ? 'on' : 'off');
+  }
+
+  /** Full screen for the whole stage (3D view and its tools); Esc leaves it. */
+  private toggleFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void this.stageEl.requestFullscreen?.().catch(() => this.say(t.fullscreenFailed));
+  }
+
+  private syncFullscreen() {
+    const on = document.fullscreenElement === this.stageEl;
+    this.fullBtn.title = on ? t.exitFullscreen : t.fullscreen;
+    this.fullBtn.setAttribute('aria-label', this.fullBtn.title);
+    this.fullBtn.classList.toggle('on', on);
+  }
+
   // ---------- Stage: model selector, truck tabs, 3D ----------
 
   private stagePanel(): HTMLElement {
-    return h(
+    this.stageEl = h(
       'section',
       { class: 'stage panel' },
       h(
@@ -1060,10 +1093,17 @@ export class Planner {
         this.shipmentHint,
       ),
       this.stageHead,
-      h('div', { class: 'canvas-wrap' }, this.canvasHost, this.helper, this.pickedBox),
+      h(
+        'div',
+        { class: 'canvas-wrap' },
+        this.canvasHost,
+        this.helper,
+        this.pickedBox,
+        h('div', { class: 'view-btns' }, info(t.viewHint), this.bigBtn, this.fullBtn),
+      ),
       this.stageTools,
-      h('p', { class: 'hint' }, t.viewHint),
     );
+    return this.stageEl;
   }
 
   /** The model selector (with each model's trucks and cartons) and one tab per truck. */
@@ -1098,7 +1138,7 @@ export class Planner {
       : null;
     this.stageHead.replaceChildren(
       ...[
-        h('div', { class: 'model-pick' }, h('label', { for: 'model-select' }, t.modelLabel), select, h('span', { class: 'hint' }, t.modelTagline[this.selected])),
+        h('div', { class: 'model-pick' }, h('label', { for: 'model-select' }, t.modelLabel), select, info(t.modelTagline[this.selected]), this.runBtn2),
         this.stale ? h('p', { class: 'stale-note' }, t.staleNote) : null,
         tabs,
       ].filter((x) => x != null) as HTMLElement[],
@@ -1198,12 +1238,16 @@ export class Planner {
     if (!result || !plan || !truck || from === to) return;
     this.remember();
     const moved = moveTier(plan, from, to, truck);
+    // The picked carton stays picked: moving keeps the order of a tier's cartons.
+    const pickedAt = this.picked && this.picked.tier === from ? plan.boxes.filter((b) => b.tier === from).indexOf(this.picked) : -1;
     const trucks = result.trucks.map((p, i) => (i === this.truckIdx ? moved : p));
     this.results = { ...this.results, [this.selected]: { ...result, trucks } };
     this.upToTier = to;
-    this.picked = null;
+    this.picked = pickedAt >= 0 ? moved.boxes.filter((b) => b.tier === to)[pickedAt] ?? null : null;
     this.say(t.tierMoved(from, to));
     this.update3d(false);
+    this.view?.setPicked(this.picked);
+    this.renderPicked();
     this.renderStageTools();
     this.renderStageHead();
     this.renderSummary();
@@ -1220,13 +1264,51 @@ export class Planner {
     const line = this.lines.find((l) => l.sku.id === b.skuId);
     const below = plan.boxes.filter((o) => o.tier === b.tier && o.z < b.z && o.y < b.y + b.dy && b.y < o.y + o.dy && o.x < b.x + b.dx && b.x < o.x + o.dx).length;
     const pose = line ? poseOf(b, repo.plannedDims(line.sku)) : null;
+    const tier = plan.tiers.find((x) => x.index === b.tier);
+    const inTier = tier?.total ?? plan.boxes.filter((o) => o.tier === b.tier).length;
+    const sameSku = tier?.counts[b.skuId] ?? plan.boxes.filter((o) => o.tier === b.tier && o.skuId === b.skuId).length;
     this.pickedBox.hidden = false;
     this.pickedBox.replaceChildren(
-      h('strong', {}, t.picked),
+      h(
+        'div',
+        { class: 'picked-head' },
+        h('strong', {}, t.picked),
+        h('button', { class: 'icon picked-close', type: 'button', title: t.close, 'aria-label': t.close, onclick: () => this.clearPick() }, '×'),
+      ),
       h('div', {}, line ? `${line.sku.code} · ${line.sku.name}` : String(b.skuId)),
-      h('div', { class: 'muted' }, t.pickedWhere(b.tier, below + 1, plan.segmentTiers)),
+      h('div', {}, t.pickedTier(b.tier, inTier, plan.segmentTiers)),
+      // Only worth a line when the tier mixes SKUs.
+      tier && Object.keys(tier.counts).length > 1 ? h('div', { class: 'muted' }, t.pickedTierSku(line?.sku.code ?? String(b.skuId), sameSku)) : '',
+      h('div', { class: 'muted' }, t.pickedLayer(below + 1)),
       h('div', { class: 'muted mono' }, `${fmt.dims(b.dx, b.dy, b.dz)} cm`),
       ...[pose ? h('div', {}, `${t.pose} ${pose}: ${t.poses[pose]}`) : null, riskText(plan, b)].filter((x): x is HTMLDivElement => !!x),
+      ...(canMoveTiers(plan) ? [this.tierMover(plan, b.tier)] : []),
+    );
+  }
+
+  private clearPick() {
+    this.picked = null;
+    this.view?.setPicked(null);
+    this.renderPicked();
+  }
+
+  /** Moving the picked carton's tier, right in the 3D view: ‹ towards the cab, › towards the door, or a position. */
+  private tierMover(plan: PlanResult, i: number): HTMLElement {
+    const n = plan.tiers.length;
+    const pos = h(
+      'select',
+      { class: 'tl-pos', 'aria-label': t.moveToLabel(i), title: t.moveToLabel(i) },
+      ...Array.from({ length: n }, (_, k) => h('option', { value: k + 1, selected: k + 1 === i }, String(k + 1))),
+    );
+    pos.addEventListener('change', () => this.moveTier(i, Number(pos.value)));
+    return h(
+      'div',
+      { class: 'tier-mover' },
+      h('span', { class: 'muted' }, t.moveTierTo),
+      h('button', { class: 'icon', type: 'button', title: t.moveEarlier, 'aria-label': t.moveEarlier, disabled: i === 1, onclick: () => this.moveTier(i, i - 1) }, '‹'),
+      pos,
+      h('button', { class: 'icon', type: 'button', title: t.moveLater, 'aria-label': t.moveLater, disabled: i === n, onclick: () => this.moveTier(i, i + 1) }, '›'),
+      info(t.moveTierHint),
     );
   }
 
@@ -1295,7 +1377,7 @@ export class Planner {
     if (plan) {
       out.push(
         h('h3', { class: 'summary-sub' }, t.thisTruck(this.truckIdx + 1, result!.trucks.length), this.slots[this.truckIdx]?.plateNo ? h('span', { class: 'mono' }, ` · ${this.slots[this.truckIdx].plateNo}`) : null),
-        plan.edited ? h('p', { class: 'hint' }, h('span', { class: 'tag warn' }, t.editedTag), ` ${t.editedHint}`) : null,
+        plan.edited ? h('p', {}, h('span', { class: 'tag warn', title: t.editedHint }, t.editedTag)) : null,
         h(
           'div',
           { class: 'kpis' },
@@ -1356,52 +1438,27 @@ export class Planner {
     if (!this.summaryBox.childElementCount) this.summaryBox.append(h('p', { class: 'muted' }, t.emptyState));
   }
 
-  /**
-   * Cartons per tier, each row clickable to show that tier in 3D. Real tiers can be moved to
-   * another place in the loading order (‹ towards the cab, › towards the door, or a position).
-   */
+  /** Cartons per tier, each row clickable to show that tier in 3D (tiers are moved from a picked carton in 3D). */
   private tierList(plan: PlanResult): HTMLElement {
     const skuOf = (id: number) => this.lines.find((l) => l.sku.id === id)?.sku;
     const skuIdx = (id: number) => this.lines.findIndex((l) => l.sku.id === id);
-    const movable = canMoveTiers(plan);
-    const n = plan.tiers.length;
     return h(
-      'div',
-      {},
-      movable ? h('p', { class: 'hint' }, t.moveTierHint) : null,
-      h(
-        'ol',
-        { class: 'tier-list' },
-        ...plan.tiers.map((tier) => {
-          const i = tier.index;
-          const pos = h(
-            'select',
-            { class: 'tl-pos', 'aria-label': t.moveToLabel(i), title: t.moveToLabel(i) },
-            ...Array.from({ length: n }, (_, k) => h('option', { value: k + 1, selected: k + 1 === i }, String(k + 1))),
-          );
-          pos.addEventListener('change', () => this.moveTier(i, Number(pos.value)));
-          return h(
-            'li',
-            { class: tier.index === this.upToTier ? 'on' : '' },
-            h(
-              'button',
-              { type: 'button', class: 'tl-main', onclick: () => this.focusTier(i) },
-              h('span', { class: 'tl-no' }, `${plan.segmentTiers ? t.segments : t.tierNo} ${i}`),
-              h('span', { class: 'tl-chips' }, ...Object.entries(tier.counts).map(([id, c]) => h('span', { class: 'chip', title: skuOf(Number(id))?.name ?? '' }, h('i', { style: `background:${skuColor(skuIdx(Number(id)))}` }), `${skuOf(Number(id))?.code ?? id} ${fmt.int(c)}`))),
-              h('span', { class: 'tl-total' }, fmt.int(tier.total)),
-            ),
-            movable
-              ? h(
-                  'span',
-                  { class: 'tl-move' },
-                  h('button', { class: 'icon', type: 'button', title: t.moveEarlier, 'aria-label': `${t.moveEarlier} (${t.tierNo} ${i})`, disabled: i === 1, onclick: () => this.moveTier(i, i - 1) }, '‹'),
-                  pos,
-                  h('button', { class: 'icon', type: 'button', title: t.moveLater, 'aria-label': `${t.moveLater} (${t.tierNo} ${i})`, disabled: i === n, onclick: () => this.moveTier(i, i + 1) }, '›'),
-                )
-              : null,
-          );
-        }),
-      ),
+      'ol',
+      { class: 'tier-list' },
+      ...plan.tiers.map((tier) => {
+        const i = tier.index;
+        return h(
+          'li',
+          { class: tier.index === this.upToTier ? 'on' : '' },
+          h(
+            'button',
+            { type: 'button', class: 'tl-main', onclick: () => this.focusTier(i) },
+            h('span', { class: 'tl-no' }, `${plan.segmentTiers ? t.segments : t.tierNo} ${i}`),
+            h('span', { class: 'tl-chips' }, ...Object.entries(tier.counts).map(([id, c]) => h('span', { class: 'chip', title: skuOf(Number(id))?.name ?? '' }, h('i', { style: `background:${skuColor(skuIdx(Number(id)))}` }), `${skuOf(Number(id))?.code ?? id} ${fmt.int(c)}`))),
+            h('span', { class: 'tl-total' }, fmt.int(tier.total)),
+          ),
+        );
+      }),
     );
   }
 
@@ -1438,9 +1495,9 @@ export class Planner {
     return h(
       'div',
       { class: 'fill-block' },
-      h('div', { class: 'fill-head' }, h('span', { class: 'kpi-label' }, t.fillTitle), plans.length > 1 ? h('span', { class: 'fill-total' }, `${t.fillShipment}: `, h('strong', {}, fmt.pct(total))) : null),
+      h('div', { class: 'fill-head' }, h('span', { class: 'kpi-label' }, t.fillTitle, ' ', info(t.fillHint)), plans.length > 1 ? h('span', { class: 'fill-total' }, `${t.fillShipment}: `, h('strong', {}, fmt.pct(total))) : null),
       ...rows,
-      h('p', { class: 'hint' }, t.fillHint),
+
     );
   }
 
@@ -1820,6 +1877,19 @@ function askShipmentNo(tempNo: string): Promise<{ no: string; draft: boolean } |
   });
 }
 
+/** A small ⓘ that shows an explanation on hover or tap, instead of a paragraph of hint text. */
+function info(text: string): HTMLElement {
+  const el = h('span', { class: 'info', tabindex: '0', role: 'note', title: text, 'aria-label': text }, 'ⓘ');
+  // Touch screens have no hover: a tap shows the text in place.
+  el.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.toggle('open');
+  });
+  el.append(h('span', { class: 'info-pop' }, text));
+  return el;
+}
+
 function personalTag(s: Sku) {
   if (!s.personal) return null;
   return h('span', { class: 'tag personal', title: t.personalNote }, s.personal === 'new' ? t.personalNew : t.personalEdited);
@@ -1832,12 +1902,11 @@ function stabilityBlock(plan: PlanResult, legend: boolean) {
   return h(
     'div',
     { class: `stability ${s.risky ? 'bad' : 'ok'}` },
-    h('span', { class: 'kpi-label' }, t.stability),
+    h('span', { class: 'kpi-label' }, t.stability, ' ', info(t.stabilityHint(...physicsNumbers(plan)))),
     h('strong', {}, s.risky ? `⚠ ${t.stabilityRisk(s.risky)}` : `✓ ${t.stabilityOk}`),
     s.risky ? h('div', { class: 'small' }, t.stabilityParts(s.tip, s.slide, s.overhang)) : null,
     s.endFace ? h('div', { class: 'small' }, t.doorNote) : null,
     legend ? h('div', { class: 'risk-legend' }, item(1, t.riskTip), item(2, t.riskSlide), item(4, t.riskOverhang), item(0, t.riskNone)) : null,
-    h('p', { class: 'hint' }, t.stabilityHint(...physicsNumbers(plan))),
   );
 }
 

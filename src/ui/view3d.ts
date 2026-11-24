@@ -283,6 +283,12 @@ export class TruckView {
     this.needsRender = true;
   }
 
+  /** Marks a carton as picked (or none) from outside, e.g. after its tier was moved. */
+  setPicked(box: PlacedBox | null) {
+    this.picked = box;
+    if (this.lastArgs) this.setPlan(...this.lastArgs);
+  }
+
   private pickAt(clientX: number, clientY: number) {
     if (!this.mesh) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
