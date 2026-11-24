@@ -1,6 +1,6 @@
 import './styles.css';
 import { dbMode, openDatabase } from './db/database';
-import { t } from './i18n/id';
+import { currentLang, t } from './i18n/id';
 import { h } from './ui/dom';
 import { Planner } from './ui/planner';
 import { MasterData } from './ui/master';
@@ -8,11 +8,14 @@ import { History } from './ui/history';
 import { admin } from './ui/admin';
 import { assistantButton } from './ui/assistant';
 import { applyTheme, currentTheme, onThemeChange, toggleTheme } from './ui/theme';
+import { openSettings } from './ui/settings';
 
 type Page = 'planner' | 'history' | 'master';
 
 async function boot() {
   applyTheme();
+  document.documentElement.lang = currentLang();
+  document.title = t.appTitle;
   const app = document.getElementById('app')!;
   app.replaceChildren(h('p', { class: 'boot' }, t.loadingDb));
   await openDatabase();
@@ -65,6 +68,8 @@ async function boot() {
   });
   renderThemeBtn();
 
+  const settingsBtn = h('button', { class: 'icon-btn', type: 'button', title: t.settings, 'aria-label': t.settings, onclick: () => openSettings() }, `⚙ ${t.settings}`);
+
   const lockBtn = h('button', { class: 'icon-btn lock', type: 'button' });
   const renderLock = () => {
     lockBtn.textContent = admin.unlocked ? `🔓 ${t.editMode}` : `🔒 ${t.viewMode}`;
@@ -80,7 +85,7 @@ async function boot() {
       { class: 'topbar' },
       h('div', { class: 'brand' }, h('span', { class: 'logo', 'aria-hidden': 'true' }, '▣'), h('div', {}, h('h1', {}, t.appTitle), h('p', {}, t.appSubtitle)), h('span', { class: 'tag soon' }, t.prototype), h('span', { class: dbMode() === 'shared' ? 'tag' : 'tag warn' }, dbMode() === 'shared' ? t.dbShared : t.dbLocal)),
       nav,
-      h('div', { class: 'top-actions' }, assistantButton(() => page), lockBtn, themeBtn),
+      h('div', { class: 'top-actions' }, assistantButton(() => page), lockBtn, settingsBtn, themeBtn),
     ),
     main,
   );

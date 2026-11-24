@@ -1,3 +1,4 @@
+import { locale } from '../i18n/id';
 type Attrs = Record<string, string | number | boolean | null | undefined | EventListener>;
 type Child = Node | string | number | null | undefined | false;
 
@@ -24,10 +25,10 @@ export function svg(tag: string, attrs: Record<string, string | number> = {}, ..
   return el;
 }
 
-const nf = new Intl.NumberFormat('id-ID');
-const nf1 = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
-const nf2 = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 });
-const nf3 = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 });
+const nf = new Intl.NumberFormat(locale());
+const nf1 = new Intl.NumberFormat(locale(), { maximumFractionDigits: 1 });
+const nf2 = new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 });
+const nf3 = new Intl.NumberFormat(locale(), { maximumFractionDigits: 3 });
 
 export const fmt = {
   int: (n: number) => nf.format(Math.round(n)),

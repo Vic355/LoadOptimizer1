@@ -11,6 +11,9 @@ export function describeRules(r: ModelRules): string[] {
   if (r.heavyBottom) out.push(d.heavyOn);
   if (r.tiers && r.maxGapCm > 0) out.push(d.gap(r.maxGapCm));
   if (r.safetyFirst) out.push(d.safetyOn, d.twoSided);
+  if (r.tiers && r.levelTiers) out.push(d.levelOn);
+  if (r.groupBySku) out.push(d.groupOn);
+  if (r.tiers && (r.mixing !== 'none' || r.groupBySku)) out.push(d.tailOn);
   out.push(d.fillFrom[r.fillFrom]);
   out.push(d.search(r.searchSeconds));
   return out;

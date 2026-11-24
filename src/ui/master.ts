@@ -526,7 +526,7 @@ export class MasterData {
     const edit = true;
     const card = (model: ModelId) => {
       const r: ModelRules = { ...all[model] };
-      const check = (key: 'tiers' | 'lineOrder' | 'interlock' | 'respectSafeStack' | 'heavyBottom' | 'safetyFirst') => {
+      const check = (key: 'tiers' | 'lineOrder' | 'interlock' | 'respectSafeStack' | 'heavyBottom' | 'safetyFirst' | 'levelTiers') => {
         const cb = h('input', { type: 'checkbox', checked: r[key], disabled: !edit });
         cb.addEventListener('change', () => (r[key] = cb.checked));
         return h('label', { class: 'check' }, cb, ` ${t.rule[key]}`);
@@ -572,6 +572,7 @@ export class MasterData {
           check('heavyBottom'),
           number('maxGapCm', 1, 0, 100, 1),
           check('safetyFirst'),
+          check('levelTiers'),
           select('fillFrom', t.fillFromOptions),
           number('searchSeconds', 1, 1, 30, 1),
         ),
@@ -661,9 +662,10 @@ export class MasterData {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
     const counts = query<{ n: string; c: number }>(
-      `SELECT 'SKU' AS n, count(*) AS c FROM skus UNION ALL SELECT 'Tipe truk', count(*) FROM truck_types UNION ALL SELECT 'Nomor polisi', count(*) FROM trucks
-       UNION ALL SELECT 'Shipment', count(*) FROM shipments
-       UNION ALL SELECT 'Tujuan', count(*) FROM destinations UNION ALL SELECT 'Rencana', count(*) FROM load_plans`,
+      `SELECT ? AS n, count(*) AS c FROM skus UNION ALL SELECT ?, count(*) FROM truck_types UNION ALL SELECT ?, count(*) FROM trucks
+       UNION ALL SELECT ?, count(*) FROM shipments
+       UNION ALL SELECT ?, count(*) FROM destinations UNION ALL SELECT ?, count(*) FROM load_plans`,
+      [t.masterSkus, t.masterTrucks, t.masterVehicles, t.shipmentLabel, t.masterDestinations, t.plansCount],
     );
     const company = h('input', { type: 'text', id: 'company-name', value: repo.getMeta('company_name') ?? '', placeholder: t.companyPlaceholder, disabled: !edit });
     return h(

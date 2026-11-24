@@ -1,7 +1,7 @@
 import { POSES, poseOf, type PlacedBox, type PlanResult, type Pose, type Tier } from '../engine';
 import * as repo from '../db/repo';
 import type { Destination, PlanTruck, Sku } from '../db/repo';
-import { t } from '../i18n/id';
+import { locale, t } from '../i18n/id';
 import { fmt, h, svg } from './dom';
 import { skuColor } from './colors';
 
@@ -131,6 +131,16 @@ function poseIcon(pose: Pose, size = 46): SVGElement {
   return el;
 }
 
+/** Layer numbers as a short text: "1–14", "1–13 (ganjil)" for every other layer, else a list. */
+function layerRange(list: number[]): string {
+  if (list.length === 1) return String(list[0]);
+  const step = list[1] - list[0];
+  const even = list.every((n, i) => i === 0 || n - list[i - 1] === step);
+  if (even && step === 1) return `${list[0]}–${list[list.length - 1]}`;
+  if (even && step === 2 && list.length > 2) return `${list[0]}–${list[list.length - 1]} (${list[0] % 2 ? t.layersOdd : t.layersEven})`;
+  return list.join(', ');
+}
+
 /** Drawn overview of the whole load, used when there is no 3D snapshot or the sheet saves ink. */
 function isometric(plan: PlanResult, truck: PlanTruck, color: (skuId: number) => string): SVGElement {
   const K = 0.866;
@@ -175,7 +185,7 @@ export function printPlan({ trucks, shipmentNo, draft, destination, note, skus, 
   const idx = (id: number) => skus.findIndex((s) => s.id === id);
   const label = (id: number) => String(idx(id) + 1);
   const company = repo.getMeta('company_name') || t.companyDefault;
-  const printed = new Date().toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
+  const printed = new Date().toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' });
   const destText = destination ? `${destination.customer} · ${destination.city}${destination.zone ? ` · ${destination.zone}` : ''}` : '–';
   const shipmentText = `${shipmentNo}${draft ? ` (${t.draftTag})` : ''}`;
   let mode = savedMode();
@@ -237,20 +247,19 @@ export function printPlan({ trucks, shipmentNo, draft, destination, note, skus, 
       // Boxes nearer the door are drawn last so they cover the ones behind; hidden boxes are drawn faint (and left out in black and white).
       for (const b of boxes) {
         const front = b.x + b.dx >= tier.x0 + tier.depth - 0.5;
-        if (!front && mode === 'gray') continue;
         const y = H - b.z - b.dz;
         const warn = front && risky.has(b);
+        // Cartons behind others (behind a turned carton, for example) show as a dashed outline.
         drawing.append(
           svg('rect', {
             x: b.y,
             y,
             width: b.dy,
             height: b.dz,
-            fill: fill(b.skuId),
-            'fill-opacity': front ? 1 : 0.4,
-            stroke: warn ? (mode === 'gray' ? '#000' : '#c0141c') : edge(b.skuId),
-            'stroke-width': warn ? 3 : 0.8,
-            'stroke-dasharray': warn && mode === 'gray' ? '6 3' : 'none',
+            fill: front ? fill(b.skuId) : 'none',
+            stroke: warn ? (mode === 'gray' ? '#000' : '#c0141c') : front ? edge(b.skuId) : '#555',
+            'stroke-width': warn ? 3 : front ? 0.8 : 1.2,
+            'stroke-dasharray': warn && mode === 'gray' ? '6 3' : front ? 'none' : '4 3',
           }),
         );
         if (numbers && front && b.dy > 14 && b.dz > 10) {
@@ -275,6 +284,57 @@ export function printPlan({ trucks, shipmentNo, draft, destination, note, skus, 
       const x = ((L - tier.x0 - tier.depth) / L) * 100;
       el.append(svg('rect', { x: Math.max(0.5, x), y: 0.5, width: Math.max(1.5, (tier.depth / L) * 100), height: 7, fill: '#111' }));
       return h('div', { class: 'p-posrow' }, doorIcon(13), el, cabIcon(17));
+    };
+
+    /**
+     * The tier written out layer by layer from the floor: how many cartons of which SKU in which
+     * pose, with layers that look the same grouped ("Lapis 1–13 (ganjil): 11× 1F"). Loaders read
+     * it next to the drawing, so they do not have to count small boxes.
+     */
+    const layerList = (tier: Tier) => {
+      const boxes = plan.boxes.filter((b) => b.tier === tier.index);
+      const levels = [...new Set(boxes.map((b) => Math.round(b.z * 2) / 2))].sort((a, b) => a - b);
+      const groups = new Map<string, { layers: number[]; parts: [string, number, boolean][] }>();
+      levels.forEach((z, k) => {
+        const parts = new Map<string, [string, number, boolean]>();
+        for (const b of boxes) {
+          if (Math.round(b.z * 2) / 2 !== z) continue;
+          const behind = b.x + b.dx < tier.x0 + tier.depth - 0.5;
+          const key = `${label(b.skuId)}${poseOfBox(b)}${behind ? '*' : ''}`;
+          const part = parts.get(key) ?? [`${label(b.skuId)}${poseOfBox(b)}`, 0, behind];
+          part[1]++;
+          parts.set(key, part);
+        }
+        const list = [...parts.values()].sort((a, b) => Number(a[2]) - Number(b[2]) || b[1] - a[1]);
+        const sig = list.map(([k, n, behind]) => `${n}${k}${behind}`).join('|');
+        const group = groups.get(sig) ?? { layers: [], parts: list };
+        group.layers.push(k + 1);
+        groups.set(sig, group);
+      });
+      const all = [...groups.values()].sort((a, b) => a.layers[0] - b.layers[0]);
+      const shown = all.slice(0, 4);
+      return h(
+        'ul',
+        { class: 'p-layers', 'aria-label': t.layersTitle },
+        ...shown.map((g) =>
+          h(
+            'li',
+            {},
+            h('b', {}, `${t.layerWord} ${layerRange(g.layers)}:`),
+            g.parts.map(([k, n, behind], i) => `${i ? ' + ' : ''}${fmt.int(n)}× ${k}${behind ? ` (${t.behindShort})` : ''}`).join(''),
+          ),
+        ),
+        all.length > shown.length ? h('li', {}, '…') : null,
+      );
+    };
+
+    /** Empty space at the left and right wall in the bottom layer, as seen from the door. */
+    const wallGaps = (tier: Tier) => {
+      const floor = plan.boxes.filter((b) => b.tier === tier.index && b.z < 0.5);
+      if (!floor.length) return null;
+      const left = Math.min(...floor.map((b) => b.y));
+      const right = W - Math.max(...floor.map((b) => b.y + b.dy));
+      return left > 1 || right > 1 ? h('div', { class: 'p-gaps' }, t.wallGaps(fmt.int(left), fmt.int(right))) : null;
     };
 
     const grid = (tier: Tier) => (tier.columns ? h('span', { class: 'p-grid-text' }, `↔ ${tier.columns} ${t.across} · ↕ ${tier.layers} ${t.stacked}`) : null);
@@ -456,6 +516,8 @@ export function printPlan({ trucks, shipmentNo, draft, destination, note, skus, 
         h('div', { class: 'p-seen' }, eyeIcon(14), t.seenFromDoor),
         tierDrawing(tier, 'p-svg', true),
         h('div', { class: 'p-sides' }, h('span', {}, `◀ ${t.left}`), grid(tier), h('span', {}, `${t.right} ▶`)),
+        wallGaps(tier),
+        layerList(tier),
         h('div', { class: 'p-counts' }, ...Object.entries(tier.counts).map(([id, c]) => h('span', { class: 'p-count' }, swatch(Number(id)), ` ${skus[idx(Number(id))]?.code ?? id}: `, h('strong', {}, fmt.int(c))))),
         h('div', { class: 'p-actual' }, h('span', { class: 'p-box' }), `${t.actual}:`, h('span', { class: 'p-line' }), h('span', {}, `☐ ${t.photo}`), h('span', {}, `☐ ${t.checker}`)),
       );

@@ -75,7 +75,7 @@ export function runModel(model: ModelId, req: PlanRequest, onProgress?: (p: Sear
   const { best, evaluated } = search(
     req,
     (rng, noise, iteration) => {
-      if (!req.rules.tiers && iteration % 2 === 0) return openAttempt(req, rng, noise);
+      if (!req.rules.tiers && !req.rules.groupBySku && iteration % 2 === 0) return openAttempt(req, rng, noise);
       return tierAttempt(req, rng, noise);
     },
     onProgress,
